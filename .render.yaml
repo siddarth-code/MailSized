@@ -1,0 +1,16 @@
+# .render.yaml
+services:
+  - type: web
+    name: mailsized
+    env: python
+    region: oregon  # Choose your preferred region
+    buildCommand: |
+      pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 8000
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
+    disk:
+      name: uploads
+      mountPath: /opt/render/project/src/temp_uploads
+      sizeGB: 1
