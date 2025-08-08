@@ -1,19 +1,7 @@
 import os
-
-# Render-specific configuration
-if "RENDER" in os.environ:
-    TEMP_UPLOAD_DIR = "/opt/render/project/src/temp_uploads"
-else:
-    TEMP_UPLOAD_DIR = "temp_uploads"
-    
-os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
-
-import os
-import uuid
 import asyncio
 import subprocess
 import logging
-import shutil
 import time
 import requests
 from datetime import datetime
@@ -25,6 +13,14 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# Render-specific configuration
+if "RENDER" in os.environ:
+    TEMP_UPLOAD_DIR = "/opt/render/project/src/temp_uploads"
+else:
+    TEMP_UPLOAD_DIR = "temp_uploads"
+    
+os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 
 # Setup CORS
 app.add_middleware(
@@ -42,10 +38,6 @@ templates = Jinja2Templates(directory="templates")
 # Configuration
 MAX_SIZE_GB = 2
 MAX_DURATION = 1200  # 20 minutes
-TEMP_UPLOAD_DIR = "temp_uploads"
-
-# Create temp directory if not exists
-os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 
 # Pricing tiers (in cents)
 PRICING_TIERS = {

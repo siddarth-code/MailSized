@@ -1,10 +1,5 @@
-fastapi==0.110.0
-uvicorn==0.27.0
-python-dotenv==1.0.1
-stripe==8.0.0
-aiofiles==23.2.1
-requests==2.31.0
-slowapi==0.1.8
+fastapi==0.109.0
+uvicorn==0.27.1
 python-multipart==0.0.9
-uuid
-shutil
+python-dotenv==1.0.1
+requests==2.31.0
