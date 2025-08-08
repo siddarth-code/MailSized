@@ -1,0 +1,6 @@
+.env
+temp_uploads/
+__pycache__/
+*.log
+temp_uploads/
+.DS_Store
