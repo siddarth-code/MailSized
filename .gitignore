@@ -1,6 +1,11 @@
-.env
-temp_uploads/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
 *.log
-temp_uploads/
+*.tmp
+*.bak
 .DS_Store
+temp_uploads/*
+!temp_uploads/.gitkeep

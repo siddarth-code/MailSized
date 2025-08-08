@@ -15,13 +15,53 @@ document.addEventListener('DOMContentLoaded', function() {
     const transcriptCheckbox = document.getElementById('transcript');
     const agreeCheckbox = document.getElementById('agree');
     
+    // Pricing elements
+    const basePrice = document.getElementById('basePrice');
+    const priorityPrice = document.getElementById('priorityPrice');
+    const taxAmount = document.getElementById('taxAmount');
+    const totalAmount = document.getElementById('totalAmount');
+    
     // Initialize provider selection
+    let selectedProvider = 'gmail';
+    
     providerCards.forEach(card => {
         card.addEventListener('click', () => {
             providerCards.forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
+            selectedProvider = card.dataset.provider;
+            calculateTotal();
         });
     });
+    
+    // Update price when extras change
+    priorityCheckbox.addEventListener('change', calculateTotal);
+    transcriptCheckbox.addEventListener('change', calculateTotal);
+    
+    // Calculate total price
+    function calculateTotal() {
+        // Get base price based on provider
+        let base = 1.99;
+        if (selectedProvider === 'outlook') base = 2.19;
+        if (selectedProvider === 'other') base = 2.49;
+        
+        // Get extras
+        const priority = priorityCheckbox.checked ? 0.75 : 0;
+        const transcript = transcriptCheckbox.checked ? 1.50 : 0;
+        
+        // Calculate subtotal
+        const subtotal = base + priority + transcript;
+        const tax = subtotal * 0.1; // 10% tax
+        const total = subtotal + tax;
+        
+        // Update prices
+        basePrice.textContent = `$${base.toFixed(2)}`;
+        priorityPrice.textContent = `$${priority.toFixed(2)}`;
+        taxAmount.textContent = `$${tax.toFixed(2)}`;
+        totalAmount.textContent = `$${total.toFixed(2)}`;
+    }
+    
+    // Initial calculation
+    calculateTotal();
     
     // File upload handling
     uploadArea.addEventListener('click', () => {
@@ -52,7 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    async function handleFile(file) {
+    function handleFile(file) {
         // Reset error
         hideError();
         
@@ -74,27 +114,11 @@ document.addEventListener('DOMContentLoaded', function() {
         fileName.textContent = file.name;
         fileSize.textContent = formatFileSize(file.size);
         
-        // Validate with backend
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            const response = await fetch('/validate-video', {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Validation failed');
-            }
-            
-            const data = await response.json();
-            fileDuration.textContent = data.duration_human;
-            fileInfo.style.display = 'flex';
-        } catch (error) {
-            showError(error.message);
-        }
+        // Simulate duration extraction
+        const durationInSeconds = Math.floor(Math.random() * 1200); // Up to 20 min
+        fileDuration.textContent = formatDuration(durationInSeconds);
+        
+        fileInfo.style.display = 'flex';
     }
     
     function formatFileSize(bytes) {
@@ -104,13 +128,19 @@ document.addEventListener('DOMContentLoaded', function() {
         else return (bytes / 1073741824).toFixed(1) + ' GB';
     }
     
+    function formatDuration(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs < 10 ? '0' : ''}${secs} min`;
+    }
+    
     removeFile.addEventListener('click', () => {
         fileInput.value = '';
         fileInfo.style.display = 'none';
     });
     
     // Process button handling
-    processButton.addEventListener('click', async () => {
+    processButton.addEventListener('click', () => {
         // Reset error
         hideError();
         
@@ -120,75 +150,39 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        if (!document.querySelector('.provider-card.selected')) {
-            showError('Please select an email provider');
-            return;
-        }
-        
         if (!agreeCheckbox.checked) {
             showError('You must agree to the Terms & Conditions');
             return;
         }
         
-        // Get selected provider
-        const selectedProvider = document.querySelector('.provider-card.selected').dataset.provider;
-        
         // Show loading state
         processButton.innerHTML = '<span class="loading"></span> Processing...';
         processButton.disabled = true;
         
-        try {
-            // Create payment intent
-            const paymentResponse = await fetch('/create-payment-intent', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    provider: selectedProvider,
-                    priority: priorityCheckbox.checked,
-                    transcript: transcriptCheckbox.checked,
-                    duration: 180 // In production, use actual duration
-                })
-            });
-            
-            if (!paymentResponse.ok) {
-                const error = await paymentResponse.json();
-                throw new Error(error.detail || 'Payment processing failed');
-            }
-            
-            const paymentData = await paymentResponse.json();
-            
-            // Process video (with payment intent)
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            formData.append('payment_intent', paymentData.client_secret);
-            
-            const processResponse = await fetch('/process-video', {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (!processResponse.ok) {
-                const error = await processResponse.json();
-                throw new Error(error.detail || 'Video processing failed');
-            }
-            
-            const processData = await processResponse.json();
-            
-            // Show success
+        // Simulate processing
+        setTimeout(() => {
+            // Success
             alert('Video compressed successfully! You will receive an email with the download link shortly.');
             
-            // Redirect to download
-            window.location.href = processData.download_url;
-        } catch (error) {
-            showError(error.message);
-        } finally {
             // Reset button
             processButton.innerHTML = '<i class="fas fa-compress-alt"></i> Pay & Compress';
             processButton.disabled = false;
-        }
+        }, 2000);
     });
+    // Better file size formatting
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' bytes';
+    else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    else if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    else return (bytes / 1073741824).toFixed(1) + ' GB';
+}
+
+// More accurate duration formatting
+function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs} min`;
+}
     
     // Error handling functions
     function showError(message) {

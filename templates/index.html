@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MailSized - Send Large Videos via Email</title>
-    <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
@@ -18,7 +18,7 @@
             </div>
             <p>Compress large videos to fit email attachments</p>
             
-            <div class="constraints">
+            <div style="display: flex; justify-content: center; gap: 15px; margin-top: 10px;">
                 <div class="constraint">
                     <i class="fas fa-file"></i>
                     <span>≤2GB files</span>
@@ -140,7 +140,7 @@
                             <i class="fas fa-exclamation-circle"></i>
                             <span>Processing Error</span>
                         </div>
-                        <div id="errorMessage">Video compression failed: Unsupported codec</div>
+                        <div id="errorMessage"></div>
                     </div>
                     
                     <button class="action-button" id="processButton">
@@ -150,7 +150,7 @@
             </div>
             
             <div class="info-card">
-                <h2><i class="fas fa-chart-line"></i> Pricing Tiers</h2>
+                <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
                 
                 <table class="pricing-table">
                     <thead>
@@ -190,53 +190,20 @@
                 <div class="price-summary">
                     <div class="price-item">
                         <span>Base compression:</span>
-                        <span>$1.99</span>
+                        <span id="basePrice">$1.99</span>
                     </div>
                     <div class="price-item">
                         <span>Priority Processing:</span>
-                        <span>$0.75</span>
+                        <span id="priorityPrice">$0.75</span>
                     </div>
                     <div class="price-item">
-                        <span>Estimated tax:</span>
-                        <span>$0.24</span>
+                        <span>Estimated tax (10%):</span>
+                        <span id="taxAmount">$0.24</span>
                     </div>
                     <div class="price-total">
                         <span>Total:</span>
-                        <span>$2.98</span>
+                        <span id="totalAmount">$2.98</span>
                     </div>
-                </div>
-                
-                <div class="business-model">
-                    <h2><i class="fas fa-business-time"></i> Business Model</h2>
-                    
-                    <div class="model-stats">
-                        <div class="stat-card">
-                            <div class="stat-value">$2.86</div>
-                            <div class="stat-label">Avg. Revenue/User</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">35%</div>
-                            <div class="stat-label">Upsell Take Rate</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">$323</div>
-                            <div class="stat-label">M1 Profit</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">$10,924</div>
-                            <div class="stat-label">M12 Profit</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="tech-spec">
-                    <h3><i class="fas fa-server"></i> Tech Spec</h3>
-                    <ul>
-                        <li><strong>Hosting:</strong> Render.com ($25/mo)</li>
-                        <li><strong>Validation:</strong> JS frontend + Python backend</li>
-                        <li><strong>Break-Even:</strong> 35 transactions/month</li>
-                        <li><strong>Next Phase:</strong> Stress-test 2GB uploads</li>
-                    </ul>
                 </div>
             </div>
         </div>
