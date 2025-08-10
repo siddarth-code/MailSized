@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: mailsized
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CLOUDCONVERT_API_KEY
+        sync: false
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: MAILGUN_DOMAIN
+        sync: false
+      - key: EMAIL_SMTP_HOST
+        sync: false
+      - key: EMAIL_SMTP_PORT
+        sync: false
+      - key: EMAIL_USERNAME
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: DOWNLOAD_TTL_MIN
+        value: "30"
+      - key: ENABLE_ADSENSE
+        value: "false"
+      - key: ADSENSE_CLIENT_ID
+        sync: false
+      - key: CONSENT_GIVEN
+        value: "false"
+    dockerfilePath: Dockerfile
+    healthCheckPath: /healthz
