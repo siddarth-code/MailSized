@@ -1,0 +1,74 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Optional: run tests before deploy
+      # - name: Set up Python
+      #   uses: actions/setup-python@v5
+      #   with:
+      #     python-version: '3.11'
+      # - name: Install deps & test
+      #   run: |
+      #     pip install -r requirements.txt
+      #     pytest -q
+
+      - name: Trigger Render deploy
+        id: trigger
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          DEPLOY_JSON=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            https://api.render.com/v1/services/$SERVICE_ID/deploys \
+            -d '{}')
+          echo "$DEPLOY_JSON"
+          DEPLOY_ID=$(echo "$DEPLOY_JSON" | python - <<'PY'
+import sys, json
+print(json.load(sys.stdin)['id'])
+PY
+)
+          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_OUTPUT
+
+      - name: Wait for deploy to finish
+        id: wait
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DEPLOY_ID: ${{ steps.trigger.outputs.DEPLOY_ID }}
+        run: |
+          set -euo pipefail
+          ATTEMPTS=120   # ~20 minutes (120 * 10s)
+          SLEEP=10
+          for i in $(seq 1 $ATTEMPTS); do
+            STATUS_JSON=$(curl -fsS \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              https://api.render.com/v1/deploys/$DEPLOY_ID)
+            STATUS=$(echo "$STATUS_JSON" | python - <<'PY'
+import sys, json
+print(json.load(sys.stdin)['status'])
+PY
+)
+            echo "Deploy status: $STATUS (attempt $i)"
+            if [ "$STATUS" = "live" ] || [ "$STATUS" = "succeeded" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "failed" ]; then
+              echo "$STATUS_JSON"
+              exit 1
+            fi
+            sleep $SLEEP
+          done
+          echo "Timed out waiting for deploy"
+          exit 1
