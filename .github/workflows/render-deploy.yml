@@ -35,11 +35,7 @@ jobs:
             https://api.render.com/v1/services/$SERVICE_ID/deploys \
             -d '{}')
           echo "$DEPLOY_JSON"
-          DEPLOY_ID=$(echo "$DEPLOY_JSON" | python - <<'PY'
-import sys, json
-print(json.load(sys.stdin)['id'])
-PY
-)
+          DEPLOY_ID=$(echo "$DEPLOY_JSON" | jq -r '.id')
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
       - name: Wait for deploy to finish
@@ -54,11 +50,7 @@ PY
             STATUS_JSON=$(curl -fsS \
               -H "Authorization: Bearer $RENDER_API_KEY" \
               https://api.render.com/v1/deploys/$DEPLOY_ID)
-            STATUS=$(echo "$STATUS_JSON" | python - <<'PY'
-import sys, json
-print(json.load(sys.stdin)['status'])
-PY
-)
+            STATUS=$(echo "$STATUS_JSON" | jq -r '.status')
             echo "Deploy status: $STATUS (attempt $i)"
             if [ "$STATUS" = "live" ] || [ "$STATUS" = "succeeded" ]; then
               exit 0
