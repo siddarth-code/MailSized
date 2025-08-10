@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+exclude = "(/build/|/dist/|/node_modules/|/\.venv/|/temp_uploads/|/\.git/|/\.mypy_cache/|/__pycache__/|/mailsized/|/slides_template\.js|/answer\.js)"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["node_modules", "mailsized", "slides_template.js", "answer.js", "create_montage.py"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-q --maxfail=1 --disable-warnings"
+testpaths = ["tests"]
