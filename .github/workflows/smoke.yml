@@ -5,4 +5,5 @@ jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-       run: echo "it works"
+      - name: Hello
+        run: echo "it works"
