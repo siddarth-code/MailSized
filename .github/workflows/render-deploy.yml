@@ -1,9 +1,9 @@
-      - name: Sanity-check secrets
+        name: Sanity-check secrets
         run: |
           test -n "${{ secrets.RENDER_API_KEY }}" || (echo "Missing RENDER_API_KEY" && exit 1)
           test -n "${{ secrets.RENDER_SERVICE_ID }}" || (echo "Missing RENDER_SERVICE_ID" && exit 1)
 
-      - name: Verify Render service exists
+        name: Verify Render service exists
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
@@ -22,7 +22,7 @@
             exit 1
           fi
 
-      - name: Trigger Render deploy (with diagnostics)
+        name: Trigger Render deploy (with diagnostics)
         id: trigger
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -45,7 +45,7 @@
           DEPLOY_ID=$(echo "$body" | jq -r '.id')
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
-      - name: Wait for deploy to finish
+        name: Wait for deploy to finish
         if: ${{ steps.trigger.outcomes != 'failure' }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
