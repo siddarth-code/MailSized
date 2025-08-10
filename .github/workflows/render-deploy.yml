@@ -1,73 +1,29 @@
-        name: Sanity-check secrets
-        run: |
-          test -n "${{ secrets.RENDER_API_KEY }}" || (echo "Missing RENDER_API_KEY" && exit 1)
-          test -n "${{ secrets.RENDER_SERVICE_ID }}" || (echo "Missing RENDER_SERVICE_ID" && exit 1)
+name: Deploy to Render
+on: { workflow_dispatch: {}, push: { branches: ["main"] } }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-        name: Verify Render service exists
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-        run: |
-          set -euo pipefail
-          echo "Checking service $SERVICE_ID ..."
-          resp=$(curl -sS -w "\n%{http_code}" \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            https://api.render.com/v1/services/$SERVICE_ID)
-          body=$(echo "$resp" | head -n-1)
-          code=$(echo "$resp" | tail -n1)
-          echo "GET /services/$SERVICE_ID → HTTP $code"
-          echo "$body" | jq .
-          if [ "$code" -ge 400 ]; then
-            echo "Service lookup failed. Check SERVICE_ID (should start with srv-...)."
-            exit 1
-          fi
+    - name: Verify secrets exist
+      shell: bash
+      run: |
+        test -n "${{ secrets.RENDER_API_KEY }}" || (echo "Missing RENDER_API_KEY" && exit 1)
+        test -n "${{ secrets.RENDER_SERVICE_ID }}" || (echo "Missing RENDER_SERVICE_ID" && exit 1)
 
-        name: Trigger Render deploy (with diagnostics)
-        id: trigger
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-        run: |
-          set -euo pipefail
-          resp=$(curl -sS -X POST -w "\n%{http_code}" \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            https://api.render.com/v1/services/$SERVICE_ID/deploys \
-            -d '{}')
-          body=$(echo "$resp" | head -n-1)
-          code=$(echo "$resp" | tail -n1)
-          echo "POST /services/$SERVICE_ID/deploys → HTTP $code"
-          echo "$body" | jq .
-          if [ "$code" -ge 300 ]; then
-            echo "Deploy trigger failed."
-            exit 1
-          fi
-          DEPLOY_ID=$(echo "$body" | jq -r '.id')
-          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_OUTPUT
-
-        name: Wait for deploy to finish
-        if: ${{ steps.trigger.outcomes != 'failure' }}
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          DEPLOY_ID: ${{ steps.trigger.outputs.DEPLOY_ID }}
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 120); do
-            resp=$(curl -sS -w "\n%{http_code}" \
-              -H "Authorization: Bearer $RENDER_API_KEY" \
-              https://api.render.com/v1/deploys/$DEPLOY_ID)
-            body=$(echo "$resp" | head -n-1)
-            code=$(echo "$resp" | tail -n1)
-            if [ "$code" -ge 400 ]; then
-              echo "GET /deploys/$DEPLOY_ID → HTTP $code"
-              echo "$body" | jq .
-              exit 1
-            fi
-            status=$(echo "$body" | jq -r '.status')
-            echo "Status: $status (try $i/120)"
-            if [ "$status" = "live" ] || [ "$status" = "succeeded" ]; then exit 0; fi
-            if [ "$status" = "failed" ]; then echo "$body" | jq .; exit 1; fi
-            sleep 10
-          done
-          echo "Timed out waiting for deploy"
-          exit 1
+    - name: Trigger Render deploy
+      shell: bash
+      env:
+        RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      run: |
+        set -euo pipefail
+        curl -fsS -X POST \
+          -H "Authorization: Bearer $RENDER_API_KEY" \
+          -H "Content-Type: application/json" \
+          "https://api.render.com/v1/services/$SERVICE_ID/deploys" \
+          -d '{}' -o /tmp/resp.json
+        echo "Render response:"
+        cat /tmp/resp.json
