@@ -5,4 +5,4 @@ jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "it works"
+       run: echo "it works"
