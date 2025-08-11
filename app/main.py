@@ -15,6 +15,8 @@ import os
 import shutil
 import subprocess
 import uuid
+import stripe
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
@@ -366,30 +368,75 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
     )
 
 
+from fastapi import Request  # (you likely already have this import at top)
+
 @app.post("/checkout")
 async def checkout(
+    request: Request,
     job_id: str = Form(...),
     provider: str = Form(...),
     priority: bool = Form(False),
     transcript: bool = Form(False),
     email: str | None = Form(None),
 ) -> JSONResponse:
+    # Look up job
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(400, "Invalid job ID")
+
+    # Validate provider
     if provider not in PROVIDER_TARGETS_MB:
         raise HTTPException(400, "Unknown email provider")
+
+    # Store selections on the job so metadata is consistent if the user navigates away
     job.provider = provider
     job.priority = bool(priority)
     job.transcript = bool(transcript)
     job.email = email.strip() if email else None
     job.target_size_mb = PROVIDER_TARGETS_MB[provider]
+
+    # Compute totals
     base = job.pricing["price"]
     upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
     total = round(base + upsell_total, 2)
-    job.status = JobStatus.QUEUED
-    asyncio.create_task(run_job(job))
-    return JSONResponse({"job_id": job_id, "amount": total, "currency": "usd", "status": "queued"})
+
+    # ---- Stripe Checkout (pay first) ----
+    amount_cents = int(round(total * 100))
+
+    metadata = {
+        "job_id": job_id,
+        "provider": provider,
+        "priority": str(job.priority),
+        "transcript": str(job.transcript),
+        "email": job.email or "",
+        "target_size_mb": str(job.target_size_mb),
+        "tier": str(job.pricing["tier"]),
+        "base_price": str(job.pricing["price"]),
+    }
+
+    # If you set PUBLIC_BASE_URL in Render, we’ll use it. Otherwise derive from request.
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or request.base_url._url.rstrip("/")
+    success_url = f"{base_url}/?paid=1&job_id={job_id}"
+    cancel_url  = f"{base_url}/?canceled=1&job_id={job_id}"
+
+    # Create Stripe session (requires stripe.api_key set near imports)
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": f"MailSized compression (Tier {job.pricing['tier']})"},
+                "unit_amount": amount_cents,
+            },
+            "quantity": 1,
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+
+    # IMPORTANT: do NOT queue the job here
+    return JSONResponse({"checkout_url": session.url, "session_id": session.id})
 
 
 @app.get("/events/{job_id}")
