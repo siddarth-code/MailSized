@@ -7,6 +7,7 @@
 // 3) Stripe redirects back with ?paid=1&job_id=... -> connect to /events/{job_id}, show stepper updates
 // 4) On 'done' -> show Download link; email is sent in parallel by backend
 
+window._mailsizedVersion = 'stripe-redirect-1'; console.log('MailSized script version:', window._mailsizedVersion);
 document.addEventListener('DOMContentLoaded', function() {
   // --- Element references ---
   const uploadArea = document.getElementById('uploadArea');
