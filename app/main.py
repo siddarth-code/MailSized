@@ -438,6 +438,44 @@ async def checkout(
     # IMPORTANT: do NOT queue the job here
     return JSONResponse({"checkout_url": session.url, "session_id": session.id})
 
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("Stripe-Signature")
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except Exception as exc:
+        logger.warning("Stripe webhook signature verification failed: %s", exc)
+        return JSONResponse(status_code=400, content={"detail": "Bad signature"})
+
+    if event["type"] == "checkout.session.completed":
+        data = event["data"]["object"]
+        meta = data.get("metadata", {}) or {}
+        job_id = meta.get("job_id")
+        job = jobs.get(job_id)
+        if job:
+            # Rehydrate selections (in case user navigated away)
+            job.provider   = meta.get("provider") or job.provider
+            job.priority   = (meta.get("priority") == "True")
+            job.transcript = (meta.get("transcript") == "True")
+            email = (meta.get("email") or "").strip()
+            job.email = email or job.email
+
+            tgt = meta.get("target_size_mb")
+            if tgt:
+                try:
+                    job.target_size_mb = int(tgt)
+                except ValueError:
+                    pass
+
+            # Start the job now (AFTER payment)
+            job.status = JobStatus.QUEUED
+            asyncio.create_task(run_job(job))
+            logger.info("Started job %s after Stripe payment", job_id)
+
+    return {"received": True}
+
 
 @app.get("/events/{job_id}")
 async def job_events(job_id: str):
