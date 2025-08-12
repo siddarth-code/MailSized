@@ -1,16 +1,11 @@
-// Client‑side logic for the MailSized frontend.
-//
-// Flow summary:
-// 1) User uploads file -> /upload returns {job_id, price, tier, duration_sec, size_bytes}
-//    -> update Base price & UI, enable Pay
-// 2) User clicks Pay -> POST /checkout -> get {checkout_url} -> redirect to Stripe
-// 3) Stripe redirects back with ?paid=1&job_id=... -> connect to /events/{job_id}, show stepper updates
-// 4) On 'done' -> show Download link; email is sent in parallel by backend
+// app/static/script.js
+// Frontend for MailSized – upload -> price -> Stripe -> progress -> download.
 
-window._mailsizedVersion = 'stripe-redirect-3';
+window._mailsizedVersion = 'v5-provider-pricing';
 console.log('MailSized script version:', window._mailsizedVersion);
-document.addEventListener('DOMContentLoaded', function() {
-  // --- Element references ---
+
+document.addEventListener('DOMContentLoaded', function () {
+  // ---- Elements
   const uploadArea = document.getElementById('uploadArea');
   const fileInput = document.getElementById('fileInput');
   const fileInfo = document.getElementById('fileInfo');
@@ -32,92 +27,97 @@ document.addEventListener('DOMContentLoaded', function() {
   const downloadSection = document.getElementById('downloadSection');
   const downloadLink = document.getElementById('downloadLink');
 
-  // Pricing elements
+  // Sidebar price labels
   const basePriceEl = document.getElementById('basePrice');
   const priorityPriceEl = document.getElementById('priorityPrice');
   const transcriptPriceEl = document.getElementById('transcriptPrice');
   const taxAmountEl = document.getElementById('taxAmount');
   const totalAmountEl = document.getElementById('totalAmount');
-  const tierLabelEl = document.getElementById('tierLabel'); // optional in your HTML
 
-  // Stepper elements
-  const step1 = document.getElementById('step1');
-  const step2 = document.getElementById('step2');
-  const step3 = document.getElementById('step3');
-  const step4 = document.getElementById('step4');
-
-  // --- State ---
+  // ---- State
   let selectedProvider = 'gmail';
+  let currentTier = null;         // 1..3 from /upload
   let jobId = null;
-  let basePrice = 0.0;
   let eventSource = null;
 
-  // --- Helpers ---
-  function resetSteps() {
-    step1.classList.remove('active');
-    step2.classList.remove('active');
-    step3.classList.remove('active');
-    step4.classList.remove('active');
-  }
-  function setActiveStep(step) {
-    resetSteps();
-    if (step >= 1) step1.classList.add('active');
-    if (step >= 2) step2.classList.add('active');
-    if (step >= 3) step3.classList.add('active');
-    if (step >= 4) step4.classList.add('active');
-  }
+  // Provider-specific base prices by tier
+  const PROVIDER_PRICING = {
+    gmail:   [1.99, 2.99, 4.99],
+    outlook: [2.19, 3.29, 4.99],
+    other:   [2.49, 3.99, 5.49],
+  };
+
+  // ---- Helpers
   function showError(msg) {
     errorMessage.textContent = msg || 'Something went wrong';
     errorContainer.style.display = 'block';
+    errorContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   function hideError() {
     errorContainer.style.display = 'none';
     errorMessage.textContent = '';
   }
+  function enablePayButton(enable) { processButton.disabled = !enable; }
   function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' bytes';
-    else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    else if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-    else return (bytes / 1073741824).toFixed(1) + ' GB';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1073741824).toFixed(1) + ' GB';
   }
   function formatDuration(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs} min`;
   }
-  function updatePriceSummary() {
-    const priorityCost = priorityCheckbox.checked ? 0.75 : 0;
-    const transcriptCost = transcriptCheckbox.checked ? 1.50 : 0;
-    const subtotal = basePrice + priorityCost + transcriptCost;
-
-    // If you don’t want tax in UI, set tax to 0 or hide the row.
-    const tax = subtotal * 0.10;
-    const total = subtotal + tax;
-
-    if (basePriceEl) basePriceEl.textContent = `$${basePrice.toFixed(2)}`;
-    if (priorityPriceEl) priorityPriceEl.textContent = `$${priorityCost.toFixed(2)}`;
-    if (transcriptPriceEl) transcriptPriceEl.textContent = `$${transcriptCost.toFixed(2)}`;
-    if (taxAmountEl) taxAmountEl.textContent = `$${tax.toFixed(2)}`;
-    if (totalAmountEl) totalAmountEl.textContent = `$${total.toFixed(2)}`;
-  }
-  function enablePayButton(enable) {
-    processButton.disabled = !enable;
-  }
   function getQueryParam(name) {
     const params = new URLSearchParams(window.location.search);
     return params.get(name);
   }
-  function startSSEForJob(id) {
-    // Close prior stream if any
-    if (eventSource) try { eventSource.close(); } catch(e) {}
-    setActiveStep(3); // Payment done, now processing → compression → finalizing
-    eventSource = new EventSource(`/events/${id}`);
-    eventSource.onmessage = function(ev) {
-      const payload = JSON.parse(ev.data);
-      const status = payload.status;
-      if (status === 'processing' || status === 'compressing' || status === 'finalizing') {
+
+  // Compute and paint sidebar totals
+  function updatePriceSummary() {
+    if (!currentTier) {
+      // Nothing uploaded yet — keep zeros
+      basePriceEl.textContent = `$0.00`;
+      priorityPriceEl.textContent = `$${priorityCheckbox.checked ? 0.75 : 0.00}`;
+      transcriptPriceEl.textContent = `$${transcriptCheckbox.checked ? 1.50 : 0.00}`;
+      taxAmountEl.textContent = `$0.00`;
+      totalAmountEl.textContent = `$0.00`;
+      return;
+    }
+    const base = PROVIDER_PRICING[selectedProvider][currentTier - 1];
+    const priority = priorityCheckbox.checked ? 0.75 : 0;
+    const transcript = transcriptCheckbox.checked ? 1.50 : 0;
+    const subtotal = base + priority + transcript;
+    const tax = subtotal * 0.10; // UI estimate only
+    const total = subtotal + tax;
+
+    basePriceEl.textContent = `$${base.toFixed(2)}`;
+    priorityPriceEl.textContent = `$${priority.toFixed(2)}`;
+    transcriptPriceEl.textContent = `$${transcript.toFixed(2)}`;
+    taxAmountEl.textContent = `$${tax.toFixed(2)}`;
+    totalAmountEl.textContent = `$${total.toFixed(2)}`;
+  }
+
+  function setActiveStep(step) {
+    ['step1','step2','step3','step4'].forEach((id, idx) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (idx < step) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+  }
+
+  function startSSE(jobId) {
+    if (eventSource) try { eventSource.close(); } catch {}
+    setActiveStep(3);
+    eventSource = new EventSource(`/events/${jobId}`);
+    eventSource.onmessage = (ev) => {
+      const payload = JSON.parse(ev.data || '{}');
+      const s = payload.status;
+      if (s === 'processing' || s === 'compressing' || s === 'finalizing') {
         setActiveStep(3);
-      } else if (status === 'done') {
+      } else if (s === 'done') {
         setActiveStep(4);
         if (payload.download_url) {
           downloadLink.href = payload.download_url;
@@ -126,8 +126,8 @@ document.addEventListener('DOMContentLoaded', function() {
         processButton.innerHTML = '<i class="fas fa-check"></i> Completed';
         processButton.disabled = true;
         eventSource.close();
-      } else if (status === 'error') {
-        showError('An error occurred during processing');
+      } else if (s === 'error') {
+        showError('An error occurred while processing your video.');
         processButton.innerHTML = '<i class="fas fa-times"></i> Error';
         processButton.disabled = false;
         eventSource.close();
@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     };
   }
 
-  // --- Provider selection ---
+  // ---- Provider selection
   providerCards.forEach(card => {
     card.addEventListener('click', () => {
       providerCards.forEach(c => c.classList.remove('selected'));
@@ -147,7 +147,7 @@ document.addEventListener('DOMContentLoaded', function() {
   priorityCheckbox.addEventListener('change', updatePriceSummary);
   transcriptCheckbox.addEventListener('change', updatePriceSummary);
 
-  // --- Upload interactions ---
+  // ---- Upload handlers
   uploadArea.addEventListener('click', () => fileInput.click());
   uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
   uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
@@ -156,14 +156,13 @@ document.addEventListener('DOMContentLoaded', function() {
     uploadArea.classList.remove('dragover');
     if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length) handleFile(e.target.files[0]);
-  });
+  fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
   removeFileBtn.addEventListener('click', () => {
     fileInput.value = '';
     fileInfo.style.display = 'none';
     jobId = null;
-    basePrice = 0;
+    currentTier = null;
     updatePriceSummary();
     setActiveStep(1);
   });
@@ -172,136 +171,105 @@ document.addEventListener('DOMContentLoaded', function() {
     hideError();
     downloadSection.style.display = 'none';
 
-    // Quick client validation
-    const allowed = ['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/x-msvideo'];
-    if (!allowed.includes(file.type)) {
-      showError('Please upload a video file (MP4, MOV, AVI, MKV)');
-      return;
-    }
-    const maxBytes = 2 * 1024 * 1024 * 1024; // 2GB
-    if (file.size > maxBytes) {
-      showError('File size exceeds maximum limit of 2GB');
-      return;
-    }
+    // basic client validation
+    const allowed = ['video/mp4','video/quicktime','video/x-matroska','video/x-msvideo'];
+    if (!allowed.includes(file.type)) return showError('Please upload a video file (MP4, MOV, AVI, MKV)');
+    if (file.size > 2 * 1024 * 1024 * 1024) return showError('File size exceeds maximum limit of 2GB');
 
-    // Show name/size immediately
+    // show immediately
     fileNameEl.textContent = file.name;
     fileSizeEl.textContent = formatFileSize(file.size);
     fileDurationEl.textContent = '...';
     fileInfo.style.display = 'flex';
 
-    // Begin upload for probing
     setActiveStep(1);
     enablePayButton(false);
     processButton.innerHTML = '<span class="loading"></span> Uploading...';
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const response = await fetch('/upload', { method: 'POST', body: formData });
-      if (!response.ok) {
-        let errMsg = 'Upload failed';
-        try { const err = await response.json(); errMsg = err.detail || errMsg; } catch {}
-        throw new Error(errMsg);
+      const fd = new FormData();
+      fd.append('file', file);
+      const resp = await fetch('/upload', { method: 'POST', body: fd });
+      if (!resp.ok) {
+        let m = 'Upload failed';
+        try { const j = await resp.json(); m = j.detail || m; } catch {}
+        throw new Error(m);
       }
-      const data = await response.json();
+      const data = await resp.json();
       console.log('UPLOAD_DATA', data);
 
-const fallbackByTier = { 1: 1.99, 2: 2.99, 3: 4.99 };
-const parsedPrice = Number(data.price);
-// Use server price if numeric; otherwise fall back to tier mapping
-basePrice = Number.isFinite(parsedPrice) ? parsedPrice : (fallbackByTier[data.tier] || 0);
-
-// Update UI
-if (tierLabelEl) tierLabelEl.textContent = `Tier ${data.tier ?? '?'}`;
-fileSizeEl.textContent = formatFileSize(data.size_bytes ?? 0);
-fileDurationEl.textContent = formatDuration(data.duration_sec ?? 0);
-updatePriceSummary();
-
-setActiveStep(2);
-enablePayButton(true);
-processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
-
-
-      // Save job + pricing from server
       jobId = data.job_id;
-      basePrice = Number(data.price) || 0;
+      currentTier = Number(data.tier);
 
-      // Update UI with probed size/duration + base price + tier label
+      // paint server‑measured size/duration
       fileSizeEl.textContent = formatFileSize(data.size_bytes);
       fileDurationEl.textContent = formatDuration(data.duration_sec);
-      if (tierLabelEl) tierLabelEl.textContent = `Tier ${data.tier}`;
-      updatePriceSummary();
 
       setActiveStep(2);
-      enablePayButton(true);
       processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
+      enablePayButton(true);
+
+      // recalc prices with tier now known
+      updatePriceSummary();
     } catch (err) {
       console.error(err);
-      showError(err.message);
-      enablePayButton(true);
+      showError(err.message || String(err));
       processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
+      enablePayButton(true);
     }
   }
 
-  // --- Pay & Compress (Stripe redirect) ---
+  // ---- Stripe Redirect
   processButton.addEventListener('click', async () => {
     hideError();
-    if (!fileInput.files.length) {
-      showError('Please upload a video file');
-      return;
-    }
-    if (!agreeCheckbox.checked) {
-      showError('You must agree to the Terms & Conditions');
-      return;
-    }
-    if (!jobId) {
-      showError('File validation failed');
-      return;
-    }
+    if (!fileInput.files.length) return showError('Please upload a video file');
+    if (!agreeCheckbox.checked) return showError('You must agree to the Terms & Conditions');
+    if (!jobId || !currentTier) return showError('File validation failed');
 
     enablePayButton(false);
     processButton.innerHTML = '<span class="loading"></span> Redirecting to Stripe...';
 
-    const formData = new FormData();
-    formData.append('job_id', jobId);
-    formData.append('provider', selectedProvider);
-    formData.append('priority', priorityCheckbox.checked);
-    formData.append('transcript', transcriptCheckbox.checked);
-    formData.append('email', emailInput.value || '');
+    const fd = new FormData();
+    fd.append('job_id', jobId);
+    fd.append('provider', selectedProvider);
+    fd.append('priority', String(priorityCheckbox.checked));
+    fd.append('transcript', String(transcriptCheckbox.checked));
+    fd.append('email', emailInput.value || '');
 
     try {
-      const resp = await fetch('/checkout', { method: 'POST', body: formData });
+      const resp = await fetch('/checkout', { method: 'POST', body: fd });
       if (!resp.ok) {
-        let errMsg = 'Checkout failed';
-        try { const err = await resp.json(); errMsg = err.detail || errMsg; } catch {}
-        throw new Error(errMsg);
+        let m = 'Checkout failed';
+        try { const j = await resp.json(); m = j.detail || m; } catch {}
+        throw new Error(m);
       }
       const data = await resp.json();
       if (data.checkout_url) {
-        window.location.href = data.checkout_url; // go to Stripe Checkout
+        window.location.href = data.checkout_url;
       } else {
         showError('No checkout URL returned');
-        enablePayButton(true);
         processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
+        enablePayButton(true);
       }
     } catch (err) {
       console.error(err);
-      showError(err.message);
-      enablePayButton(true);
+      showError(err.message || String(err));
       processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
+      enablePayButton(true);
     }
   });
 
-  // --- Return from Stripe: auto‑resume job ---
-  // If Stripe sent us back with ?paid=1&job_id=..., attach to SSE and advance stepper
+  // ---- Auto resume after Stripe
   (function resumeIfPaid() {
     const paid = getQueryParam('paid');
-    const jid  = getQueryParam('job_id');
+    const jid = getQueryParam('job_id');
     if (paid === '1' && jid) {
       jobId = jid;
       setActiveStep(3);
-      startSSEForJob(jid);
+      startSSE(jid);
     }
   })();
+
+  // Initial paint
+  updatePriceSummary();
 });
