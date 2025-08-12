@@ -6,6 +6,7 @@ Implements upload → Stripe pay → compression → download with:
 - Provider-specific base prices (Gmail/Outlook/Other)
 - SSE progress stream
 - Mailgun/SMTP notification
+- Robust ffmpeg 2-pass ABR compression targeting provider attachment limits
 """
 
 from __future__ import annotations
@@ -18,18 +19,11 @@ import shutil
 import subprocess
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 import stripe
-from fastapi import (
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    UploadFile,
-)
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -123,19 +117,19 @@ class Job:
         self.size_bytes = size_bytes
         self.pricing = pricing
 
-        self.provider: str | None = None
+        self.provider: Optional[str] = None
         self.priority: bool = False
         self.transcript: bool = False
-        self.email: str | None = None
-        self.target_size_mb: int | None = None
+        self.email: Optional[str] = None
+        self.target_size_mb: Optional[int] = None
 
         self.status: str = JobStatus.QUEUED
-        self.output_path: str | None = None
+        self.output_path: Optional[str] = None
         self.created_at = datetime.utcnow()
-        self.download_expiry: datetime | None = None
+        self.download_expiry: Optional[datetime] = None
 
     @property
-    def download_url(self) -> str | None:
+    def download_url(self) -> Optional[str]:
         if self.status != JobStatus.DONE or not self.output_path:
             return None
         return f"/download/{self.job_id}"
@@ -166,17 +160,126 @@ async def probe_duration(file_path: str) -> float:
             check=True,
         )
         return float(result.stdout.strip())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("ffprobe failed: %s", exc)
         return 0.0
 
 
+def _has_ffmpeg() -> bool:
+    try:
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return True
+    except Exception:
+        return False
+
+
 async def compress_video(file_path: str, output_path: str, target_size_mb: int) -> None:
-    """Simulated compression (copy file)."""
-    api_key = os.getenv("CLOUDCONVERT_API_KEY")
-    if api_key:
-        logger.info("CLOUDCONVERT key present; would call external API here.")
-    await asyncio.sleep(2)
+    """
+    Robust 2‑pass ffmpeg ABR aiming for ~target_size_mb.
+    Strategy:
+      - Compute total target bitrate from desired size & measured duration.
+      - Allocate audio/video (prefer 96–128 kbps audio; rest to video with floors).
+      - Encode, then check actual output size; if slightly high, retry 1–2 times at 90% / 81% bitrate.
+      - Fallback to copy if ffmpeg/ffprobe missing or repeated failure.
+    """
+    if not _has_ffmpeg():
+        logger.warning("ffmpeg/ffprobe not available; returning original file (no compression).")
+        shutil.copy(file_path, output_path)
+        return
+
+    # 1) Get duration (seconds)
+    try:
+        res = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True, check=True
+        )
+        duration = max(1.0, float(res.stdout.strip()))
+    except Exception:
+        duration = 60.0  # sane default
+
+    # Small safety margin for container overhead / muxing variability
+    size_margin = 0.97  # aim for 97% of the cap
+    target_bits = int(target_size_mb * 1024 * 1024 * 8 * size_margin)
+    total_kbps = max(280.0, (target_bits / duration) / 1000.0)  # floor to avoid too‑low rates
+
+    # Allocate audio/video kbps
+    # For tiny caps (15MB), use 96 kbps audio. Else 128 kbps.
+    audio_kbps = 96.0 if target_size_mb <= 15 else 128.0
+    video_kbps = max(200.0, total_kbps - audio_kbps)
+
+    # Prepare passlog path base
+    passlog = output_path + ".log"
+
+    def _encode(vkbps: float, akbps: float, out_path: str):
+        # Two‑pass encode
+        cmd1 = [
+            "ffmpeg", "-y", "-i", file_path,
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:v", "libx264", "-preset", "medium",
+            "-b:v", f"{vkbps:.0f}k", "-maxrate", f"{(vkbps*1.05):.0f}k", "-bufsize", f"{(vkbps*2):.0f}k",
+            "-pass", "1",
+            "-c:a", "aac", "-b:a", f"{akbps:.0f}k",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            "-passlogfile", passlog, os.devnull
+        ]
+        cmd2 = [
+            "ffmpeg", "-y", "-i", file_path,
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:v", "libx264", "-preset", "medium",
+            "-b:v", f"{vkbps:.0f}k", "-maxrate", f"{(vkbps*1.05):.0f}k", "-bufsize", f"{(vkbps*2):.0f}k",
+            "-pass", "2",
+            "-c:a", "aac", "-b:a", f"{akbps:.0f}k",
+            "-movflags", "+faststart",
+            out_path,
+            "-passlogfile", passlog
+        ]
+
+        def _run(cmd): subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        asyncio.run(asyncio.to_thread(_run, cmd1))
+        asyncio.run(asyncio.to_thread(_run, cmd2))
+
+    def _try_cleanup_logs():
+        for suffix in (".log-0.log", ".log-0.log.mbtree", ".log"):
+            p = passlog.replace(".log", suffix)
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    # Attempt up to 3 encodes with decreasing bitrate if oversized
+    for attempt, scale in enumerate([1.0, 0.9, 0.81], start=1):
+        vkbps = video_kbps * scale
+        try:
+            _encode(vkbps, audio_kbps, output_path)
+            _try_cleanup_logs()
+        except Exception as exc:
+            _try_cleanup_logs()
+            logger.warning("ffmpeg pass failed on attempt %d: %s", attempt, exc)
+            if attempt == 3:
+                shutil.copy(file_path, output_path)
+                return
+            continue
+
+        # Validate size
+        try:
+            actual_size = os.path.getsize(output_path)
+        except Exception:
+            actual_size = target_size_mb * 1024 * 1024  # assume success
+
+        if actual_size <= target_size_mb * 1024 * 1024:
+            # Success within cap
+            return
+        else:
+            logger.info(
+                "Encoded size %.2fMB over cap %dMB (attempt %d). Retrying with lower bitrate.",
+                actual_size / (1024 * 1024), target_size_mb, attempt
+            )
+            # Try again with lower bitrate loop iteration
+
+    # If we reached here (shouldn't), fallback
     shutil.copy(file_path, output_path)
 
 
@@ -211,7 +314,7 @@ async def send_email(recipient: str, download_url: str) -> None:
             await asyncio.to_thread(_send_mailgun)
             logger.info("Email sent to %s via Mailgun", recipient)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Mailgun send failed: %s", exc)
 
     host = os.getenv("EMAIL_SMTP_HOST")
@@ -241,7 +344,7 @@ async def send_email(recipient: str, download_url: str) -> None:
             server.login(username, password)
             server.send_message(msg)
         logger.info("Email sent to %s via SMTP", recipient)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("SMTP send failed: %s", exc)
 
 
@@ -266,7 +369,7 @@ async def run_job(job: Job) -> None:
             await send_email(job.email, job.download_url or "")
 
         asyncio.create_task(cleanup_job(job.job_id))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Error during job %s: %s", job.job_id, exc)
         job.status = JobStatus.ERROR
 
@@ -283,7 +386,7 @@ async def cleanup_job(job_id: str) -> None:
             os.remove(job.output_path)
         if os.path.exists(job.file_path):
             os.remove(job.file_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Cleanup failed for %s: %s", job_id, exc)
     jobs.pop(job_id, None)
     logger.info("Cleaned up job %s", job_id)
@@ -447,7 +550,7 @@ async def stripe_webhook(request: Request):
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Stripe webhook signature verification failed: %s", exc)
         return JSONResponse(status_code=400, content={"detail": "Bad signature"})
 
@@ -460,8 +563,8 @@ async def stripe_webhook(request: Request):
         if job:
             # restore selections
             job.provider = meta.get("provider") or job.provider
-            job.priority = (meta.get("priority") == "True") or (meta.get("priority") == "true")
-            job.transcript = (meta.get("transcript") == "True") or (meta.get("transcript") == "true")
+            job.priority = (meta.get("priority") in ("True", "true", "1"))
+            job.transcript = (meta.get("transcript") in ("True", "true", "1"))
             email = (meta.get("email") or "").strip()
             job.email = email or job.email
             try:
@@ -526,5 +629,4 @@ async def health() -> Dict[str, str]:
 
 if __name__ == "__main__":  # pragma: no cover
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
