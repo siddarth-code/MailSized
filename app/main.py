@@ -397,14 +397,50 @@ async def checkout(
     job.target_size_mb = PROVIDER_TARGETS_MB[provider]
 
     # --- Provider-based base price by tier ---
-    tier = job.pricing["tier"]  # 1, 2, or 3
-    provider_prices = PROVIDER_PRICING.get(provider)
-    if not provider_prices:
-        raise HTTPException(400, "Unknown email provider")
-    try:
-        base = float(provider_prices[tier - 1])
-    except Exception:
-        raise HTTPException(400, "Invalid tier for provider pricing")
+    # ...after validating job and provider and saving fields...
+tier = job.pricing["tier"]  # 1..3
+
+provider_prices = PROVIDER_PRICING.get(provider)
+if not provider_prices:
+    raise HTTPException(400, "Unknown email provider")
+try:
+    base = float(provider_prices[tier - 1])
+except Exception:
+    raise HTTPException(400, "Invalid tier for provider pricing")
+
+upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
+total = round(base + upsell_total, 2)
+
+amount_cents = int(round(total * 100))
+base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or request.base_url._url.rstrip("/")
+success_url = f"{base_url}/?paid=1&job_id={job_id}"
+cancel_url  = f"{base_url}/?canceled=1&job_id={job_id}"
+
+session = stripe.checkout.Session.create(
+    mode="payment",
+    line_items=[{
+        "price_data": {
+            "currency": "usd",
+            "product_data": {"name": f"MailSized compression (Tier {tier})"},
+            "unit_amount": amount_cents,
+        },
+        "quantity": 1,
+    }],
+    success_url=success_url,
+    cancel_url=cancel_url,
+    metadata={
+        "job_id": job_id,
+        "provider": provider,
+        "priority": str(job.priority),
+        "transcript": str(job.transcript),
+        "email": job.email or "",
+        "target_size_mb": str(job.target_size_mb),
+        "tier": str(tier),
+        "base_price": str(base),
+    },
+)
+return JSONResponse({"checkout_url": session.url, "session_id": session.id})
+
 
     # Extras
     upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
