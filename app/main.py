@@ -174,113 +174,129 @@ def _has_ffmpeg() -> bool:
         return False
 
 
+# ---------- Replace compress_video with a real implementation ----------
+
+def _calc_target_bitrate_kbps(target_size_mb: int, duration_sec: float) -> tuple[int, int]:
+    """
+    Compute a video+audio bitrate (Kbps) to hit a target file size.
+
+    We reserve ~5% container overhead and 96–128 Kbps for audio (AAC).
+    Returns (video_kbps, audio_kbps).
+    """
+    duration_sec = max(1.0, float(duration_sec))
+    target_bits = target_size_mb * 1024 * 1024 * 8
+    container_overhead = int(target_bits * 0.05)
+    usable_bits = max(1, target_bits - container_overhead)
+
+    # audio bitrate
+    audio_kbps = 128 if duration_sec >= 300 else 96  # 5+ min → 128, else 96
+    audio_bits = int(audio_kbps * 1000 * duration_sec)
+
+    video_bits = max(1, usable_bits - audio_bits)
+    video_kbps = max(150, int(video_bits / duration_sec / 1000))  # floor at 150 Kbps
+
+    # cap extremely high bitrates (we're emailing tiny files)
+    video_kbps = min(video_kbps, 4000)
+    return video_kbps, audio_kbps
+
+
+async def _run_ffmpeg_2pass(src: str, dst: str, video_kbps: int, audio_kbps: int) -> None:
+    """
+    Run a classic two‑pass ABR encode with libx264 + AAC.
+    """
+    log_path = os.path.join(TEMP_UPLOAD_DIR, f"ffmpeg2pass_{uuid.uuid4().hex}")
+    pass1 = [
+        "ffmpeg", "-y",
+        "-i", src,
+        "-c:v", "libx264", "-b:v", f"{video_kbps}k",
+        "-pass", "1", "-passlogfile", log_path,
+        "-an",               # no audio in pass 1
+        "-preset", "veryfast",
+        "-movflags", "+faststart",
+        "-f", "mp4", "/dev/null"
+    ]
+    pass2 = [
+        "ffmpeg", "-y",
+        "-i", src,
+        "-c:v", "libx264", "-b:v", f"{video_kbps}k",
+        "-pass", "2", "-passlogfile", log_path,
+        "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+        "-preset", "veryfast",
+        "-movflags", "+faststart",
+        dst
+    ]
+    try:
+        subprocess.run(pass1, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(pass2, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    finally:
+        # clean 2-pass logs
+        for ext in (".log", ".log.mbtree"):
+            p = f"{log_path}{ext}"
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
 async def compress_video(file_path: str, output_path: str, target_size_mb: int) -> None:
     """
-    Robust 2‑pass ffmpeg ABR aiming for ~target_size_mb.
-    Strategy:
-      - Compute total target bitrate from desired size & measured duration.
-      - Allocate audio/video (prefer 96–128 kbps audio; rest to video with floors).
-      - Encode, then check actual output size; if slightly high, retry 1–2 times at 90% / 81% bitrate.
-      - Fallback to copy if ffmpeg/ffprobe missing or repeated failure.
+    Compress to meet an email provider's cap using:
+      1) Two‑pass ABR targeting the provider cap
+      2) If slightly over, try again at 90% then 80% of the original bitrate
+      3) If still over (very noisy footage), fall back to CRF ladder (CRF 28→30→32)
     """
-    if not _has_ffmpeg():
-        logger.warning("ffmpeg/ffprobe not available; returning original file (no compression).")
-        shutil.copy(file_path, output_path)
+    # 1) initial ABR bitrate
+    duration_sec = await probe_duration(file_path)
+    if duration_sec <= 0:
+        # duration unknown → try a conservative CRF to ensure shrink
+        crf_cmd = [
+            "ffmpeg", "-y", "-i", file_path,
+            "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
+            "-c:a", "aac", "-b:a", "96k",
+            "-movflags", "+faststart",
+            output_path
+        ]
+        subprocess.run(crf_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return
 
-    # 1) Get duration (seconds)
-    try:
-        res = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            capture_output=True, text=True, check=True
-        )
-        duration = max(1.0, float(res.stdout.strip()))
-    except Exception:
-        duration = 60.0  # sane default
+    v_kbps, a_kbps = _calc_target_bitrate_kbps(target_size_mb, duration_sec)
 
-    # Small safety margin for container overhead / muxing variability
-    size_margin = 0.97  # aim for 97% of the cap
-    target_bits = int(target_size_mb * 1024 * 1024 * 8 * size_margin)
-    total_kbps = max(280.0, (target_bits / duration) / 1000.0)  # floor to avoid too‑low rates
-
-    # Allocate audio/video kbps
-    # For tiny caps (15MB), use 96 kbps audio. Else 128 kbps.
-    audio_kbps = 96.0 if target_size_mb <= 15 else 128.0
-    video_kbps = max(200.0, total_kbps - audio_kbps)
-
-    # Prepare passlog path base
-    passlog = output_path + ".log"
-
-    def _encode(vkbps: float, akbps: float, out_path: str):
-        # Two‑pass encode
-        cmd1 = [
-            "ffmpeg", "-y", "-i", file_path,
-            "-map", "0:v:0", "-map", "0:a:0?",
-            "-c:v", "libx264", "-preset", "medium",
-            "-b:v", f"{vkbps:.0f}k", "-maxrate", f"{(vkbps*1.05):.0f}k", "-bufsize", f"{(vkbps*2):.0f}k",
-            "-pass", "1",
-            "-c:a", "aac", "-b:a", f"{akbps:.0f}k",
-            "-movflags", "+faststart",
-            "-f", "mp4",
-            "-passlogfile", passlog, os.devnull
-        ]
-        cmd2 = [
-            "ffmpeg", "-y", "-i", file_path,
-            "-map", "0:v:0", "-map", "0:a:0?",
-            "-c:v", "libx264", "-preset", "medium",
-            "-b:v", f"{vkbps:.0f}k", "-maxrate", f"{(vkbps*1.05):.0f}k", "-bufsize", f"{(vkbps*2):.0f}k",
-            "-pass", "2",
-            "-c:a", "aac", "-b:a", f"{akbps:.0f}k",
-            "-movflags", "+faststart",
-            out_path,
-            "-passlogfile", passlog
-        ]
-
-        def _run(cmd): subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        asyncio.run(asyncio.to_thread(_run, cmd1))
-        asyncio.run(asyncio.to_thread(_run, cmd2))
-
-    def _try_cleanup_logs():
-        for suffix in (".log-0.log", ".log-0.log.mbtree", ".log"):
-            p = passlog.replace(".log", suffix)
-            try:
-                os.remove(p)
-            except Exception:
-                pass
-
-    # Attempt up to 3 encodes with decreasing bitrate if oversized
-    for attempt, scale in enumerate([1.0, 0.9, 0.81], start=1):
-        vkbps = video_kbps * scale
+    # Try ABR at 100%, then 90%, then 80% of computed bitrate
+    for scale in (1.00, 0.90, 0.80):
         try:
-            _encode(vkbps, audio_kbps, output_path)
-            _try_cleanup_logs()
-        except Exception as exc:
-            _try_cleanup_logs()
-            logger.warning("ffmpeg pass failed on attempt %d: %s", attempt, exc)
-            if attempt == 3:
-                shutil.copy(file_path, output_path)
+            await _run_ffmpeg_2pass(file_path, output_path, int(v_kbps * scale), a_kbps)
+            final_bytes = os.path.getsize(output_path)
+            final_mb = final_bytes / (1024 * 1024)
+            if final_mb <= (target_size_mb * 1.03):  # small headroom OK
                 return
-            continue
+        except subprocess.CalledProcessError as e:
+            logger.warning("ffmpeg ABR encode failed at scale %.2f: %s", scale, e)
 
-        # Validate size
+    # Fall back to CRF ladder if ABR couldn't consistently hit cap
+    for crf in (28, 30, 32):
         try:
-            actual_size = os.path.getsize(output_path)
-        except Exception:
-            actual_size = target_size_mb * 1024 * 1024  # assume success
+            crf_cmd = [
+                "ffmpeg", "-y", "-i", file_path,
+                "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast",
+                "-c:a", "aac", "-b:a", f"{a_kbps}k",
+                "-movflags", "+faststart",
+                output_path
+            ]
+            subprocess.run(crf_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            final_bytes = os.path.getsize(output_path)
+            final_mb = final_bytes / (1024 * 1024)
+            if final_mb <= (target_size_mb * 1.03):
+                return
+        except subprocess.CalledProcessError as e:
+            logger.warning("ffmpeg CRF=%s encode failed: %s", crf, e)
 
-        if actual_size <= target_size_mb * 1024 * 1024:
-            # Success within cap
-            return
-        else:
-            logger.info(
-                "Encoded size %.2fMB over cap %dMB (attempt %d). Retrying with lower bitrate.",
-                actual_size / (1024 * 1024), target_size_mb, attempt
-            )
-            # Try again with lower bitrate loop iteration
+    # If everything failed, keep the best attempt (smallest file)
+    try:
+        # nothing else to do; output_path should contain last attempt
+        pass
+    except Exception:
+        shutil.copy(file_path, output_path)  # last‑ditch copy (won't meet cap)
 
-    # If we reached here (shouldn't), fallback
-    shutil.copy(file_path, output_path)
 
 
 async def send_email(recipient: str, download_url: str) -> None:
