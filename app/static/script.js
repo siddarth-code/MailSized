@@ -205,6 +205,23 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error(errMsg);
       }
       const data = await response.json();
+      console.log('UPLOAD_DATA', data);
+
+const fallbackByTier = { 1: 1.99, 2: 2.99, 3: 4.99 };
+const parsedPrice = Number(data.price);
+// Use server price if numeric; otherwise fall back to tier mapping
+basePrice = Number.isFinite(parsedPrice) ? parsedPrice : (fallbackByTier[data.tier] || 0);
+
+// Update UI
+if (tierLabelEl) tierLabelEl.textContent = `Tier ${data.tier ?? '?'}`;
+fileSizeEl.textContent = formatFileSize(data.size_bytes ?? 0);
+fileDurationEl.textContent = formatDuration(data.duration_sec ?? 0);
+updatePriceSummary();
+
+setActiveStep(2);
+enablePayButton(true);
+processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
+
 
       // Save job + pricing from server
       jobId = data.job_id;
