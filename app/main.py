@@ -70,22 +70,25 @@ PROVIDER_PRICING = {
 
 
 def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
-    """Return the pricing tier and base price for a given video.
-
-    The smaller of the video duration (in minutes) and the size (in MB) is
-    compared against the defined tiers.  Values beyond Tier 3 result in
-    ``ValueError``.
-    """
+    """Return tier + base price based on caps: ≤5m/≤500MB, ≤10m/≤1GB, ≤20m/≤2GB."""
     minutes = duration_sec / 60
     mb_size = file_size_bytes / (1024 * 1024)
-    if minutes <= 5 and mb_size <= 100:
-        tier, price, max_len, max_mb = 1, 1.99, 5, 100
-    elif minutes <= 10 and mb_size <= 200:
-        tier, price, max_len, max_mb = 2, 2.99, 10, 200
-    elif minutes <= 20 and mb_size <= 400:
-        tier, price, max_len, max_mb = 3, 4.99, 20, 400
+
+    # Tier 1: ≤5 min AND ≤500 MB
+    if minutes <= 5 and mb_size <= 500:
+        tier, price, max_len, max_mb = 1, 1.99, 5, 500
+
+    # Tier 2: ≤10 min AND ≤1024 MB (1 GB)
+    elif minutes <= 10 and mb_size <= 1024:
+        tier, price, max_len, max_mb = 2, 2.99, 10, 1024
+
+    # Tier 3: ≤20 min AND ≤2048 MB (2 GB)  ← matches overall 2 GB hard cap
+    elif minutes <= 20 and mb_size <= 2048:
+        tier, price, max_len, max_mb = 3, 4.49, 20, 2048
+
     else:
         raise ValueError("Video exceeds allowed limits for all tiers.")
+
     return {
         "tier": tier,
         "price": round(price, 2),
