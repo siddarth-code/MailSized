@@ -6,6 +6,15 @@ pwd
 echo "=== Files in directory ==="
 ls -la
 
+set -e
+
+# Install ffmpeg/ffprobe
+apt-get update && apt-get install -y --no-install-recommends ffmpeg
+
+# Continue with normal Python build
+pip install --upgrade pip
+pip install -r requirements.txt
+
 # Install dependencies
 echo "=== Installing dependencies ==="
 pip install -r requirements.txt
