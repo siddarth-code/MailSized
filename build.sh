@@ -7,6 +7,8 @@ echo "=== Files in directory ==="
 ls -la
 
 set -e
+# Cleanup old temp uploads before each build
+rm -rf temp_uploads/* || true
 
 # Install ffmpeg/ffprobe
 apt-get update && apt-get install -y --no-install-recommends ffmpeg
