@@ -58,6 +58,12 @@ PROVIDER_TARGETS_MB = {
     "outlook": 20,
     "other": 15,
 }
+# Provider-specific base prices by tier index (1-based tier -> list index)
+PROVIDER_PRICING = {
+    "gmail":   [1.99, 2.99, 4.49],
+    "outlook": [2.19, 3.29, 4.99],
+    "other":   [2.49, 3.99, 5.49],
+}
 
 
 def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
@@ -396,9 +402,17 @@ async def checkout(
     job.target_size_mb = PROVIDER_TARGETS_MB[provider]
 
     # Compute totals
-    base = job.pricing["price"]
-    upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
-    total = round(base + upsell_total, 2)
+    tier = job.pricing["tier"]  # 1, 2, or 3
+provider_prices = PROVIDER_PRICING.get(provider)
+if not provider_prices:
+    raise HTTPException(400, "Unknown email provider")
+try:
+    base = float(provider_prices[tier - 1])
+except Exception:
+    raise HTTPException(400, "Invalid tier for provider pricing")
+
+upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
+total = round(base + upsell_total, 2)
 
     # ---- Stripe Checkout (pay first) ----
     amount_cents = int(round(total * 100))
