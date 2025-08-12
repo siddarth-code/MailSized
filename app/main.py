@@ -15,12 +15,11 @@ import os
 import shutil
 import subprocess
 import uuid
-import stripe
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
 import requests
+import stripe
 from fastapi import (
     BackgroundTasks,
     FastAPI,
@@ -34,6 +33,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Stripe key
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +60,7 @@ PROVIDER_TARGETS_MB = {
     "outlook": 20,
     "other": 15,
 }
+
 # Provider-specific base prices by tier index (1-based tier -> list index)
 PROVIDER_PRICING = {
     "gmail":   [1.99, 2.99, 4.49],
@@ -179,16 +182,7 @@ async def compress_video(file_path: str, output_path: str, target_size_mb: int) 
 
 
 async def send_email(recipient: str, download_url: str) -> None:
-    """Send the download link via Mailgun if configured, otherwise SMTP.
-
-    The function first attempts to send an email using the Mailgun API when
-    the required credentials (`MAILGUN_API_KEY` and `MAILGUN_DOMAIN`) are
-    present.  Emails include custom headers (`Auto-Submitted`,
-    `X-Auto-Response-Suppress`, `Reply-To`) as required.  If Mailgun
-    credentials are missing, it falls back to SMTP using the
-    `EMAIL_SMTP_*` variables.  Any errors are logged and suppressed.
-    """
-    # Prepare common values
+    """Send the download link via Mailgun if configured, otherwise SMTP."""
     sender = os.getenv("SENDER_EMAIL", "no-reply@mailsized.com")
     subject = "Your compressed video is ready"
     body = (
@@ -300,7 +294,7 @@ async def cleanup_job(job_id: str) -> None:
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -374,8 +368,6 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
     )
 
 
-from fastapi import Request  # (you likely already have this import at top)
-
 @app.post("/checkout")
 async def checkout(
     request: Request,
@@ -401,22 +393,22 @@ async def checkout(
     job.email = email.strip() if email else None
     job.target_size_mb = PROVIDER_TARGETS_MB[provider]
 
-    # Compute totals
+    # --- Provider-based base price by tier ---
     tier = job.pricing["tier"]  # 1, 2, or 3
-provider_prices = PROVIDER_PRICING.get(provider)
-if not provider_prices:
-    raise HTTPException(400, "Unknown email provider")
-try:
-    base = float(provider_prices[tier - 1])
-except Exception:
-    raise HTTPException(400, "Invalid tier for provider pricing")
+    provider_prices = PROVIDER_PRICING.get(provider)
+    if not provider_prices:
+        raise HTTPException(400, "Unknown email provider")
+    try:
+        base = float(provider_prices[tier - 1])
+    except Exception:
+        raise HTTPException(400, "Invalid tier for provider pricing")
 
-upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
-total = round(base + upsell_total, 2)
+    # Extras
+    upsell_total = (0.75 if job.priority else 0) + (1.50 if job.transcript else 0)
+    total = round(base + upsell_total, 2)
 
     # ---- Stripe Checkout (pay first) ----
     amount_cents = int(round(total * 100))
-
     metadata = {
         "job_id": job_id,
         "provider": provider,
@@ -425,21 +417,19 @@ total = round(base + upsell_total, 2)
         "email": job.email or "",
         "target_size_mb": str(job.target_size_mb),
         "tier": str(job.pricing["tier"]),
-        "base_price": str(job.pricing["price"]),
+        "base_price": str(base),
     }
 
-    # If you set PUBLIC_BASE_URL in Render, we’ll use it. Otherwise derive from request.
-    base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or request.base_url._url.rstrip("/")
+    base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or str(request.base_url).rstrip("/")
     success_url = f"{base_url}/?paid=1&job_id={job_id}"
-    cancel_url  = f"{base_url}/?canceled=1&job_id={job_id}"
+    cancel_url = f"{base_url}/?canceled=1&job_id={job_id}"
 
-    # Create Stripe session (requires stripe.api_key set near imports)
     session = stripe.checkout.Session.create(
         mode="payment",
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": f"MailSized compression (Tier {job.pricing['tier']})"},
+                "product_data": {"name": f"MailSized compression (Tier {tier})"},
                 "unit_amount": amount_cents,
             },
             "quantity": 1,
@@ -449,8 +439,9 @@ total = round(base + upsell_total, 2)
         metadata=metadata,
     )
 
-    # IMPORTANT: do NOT queue the job here
+    # Do NOT start the job here—wait for webhook
     return JSONResponse({"checkout_url": session.url, "session_id": session.id})
+
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
@@ -470,12 +461,11 @@ async def stripe_webhook(request: Request):
         job = jobs.get(job_id)
         if job:
             # Rehydrate selections (in case user navigated away)
-            job.provider   = meta.get("provider") or job.provider
-            job.priority   = (meta.get("priority") == "True")
+            job.provider = meta.get("provider") or job.provider
+            job.priority = (meta.get("priority") == "True")
             job.transcript = (meta.get("transcript") == "True")
             email = (meta.get("email") or "").strip()
             job.email = email or job.email
-
             tgt = meta.get("target_size_mb")
             if tgt:
                 try:
@@ -509,6 +499,7 @@ async def job_events(job_id: str):
                 if job.status in {JobStatus.DONE, JobStatus.ERROR}:
                     break
             await asyncio.sleep(1)
+
     return StreamingResponse(event_generator(job_id), media_type="text/event-stream")
 
 
