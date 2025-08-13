@@ -1,272 +1,292 @@
-// Client‑side logic for the MailSized frontend.
-//
-// This script manages file selection, pricing calculations, checkout and
-// compression progress.  It communicates with the FastAPI backend via
-// fetch() and consumes a Server‑Sent Event (SSE) stream to update the
-// progress bar in real time.
+/* MailSized front-end – v6.2
+   - Robust /checkout POST + inline error handling
+   - Live SSE progress (percent + bar)
+   - Provider pricing wired to tiers (≤500MB / ≤1GB / ≤2GB)
+*/
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Element references
-    const uploadArea = document.getElementById('uploadArea');
-    const fileInput = document.getElementById('fileInput');
-    const fileInfo = document.getElementById('fileInfo');
-    const fileNameEl = document.getElementById('fileName');
-    const fileSizeEl = document.getElementById('fileSize');
-    const fileDurationEl = document.getElementById('fileDuration');
-    const removeFileBtn = document.getElementById('removeFile');
-    const providerCards = document.querySelectorAll('.provider-card');
-    const priorityCheckbox = document.getElementById('priority');
-    const transcriptCheckbox = document.getElementById('transcript');
-    const agreeCheckbox = document.getElementById('agree');
-    const emailInput = document.getElementById('userEmail');
-    const processButton = document.getElementById('processButton');
-    const errorContainer = document.getElementById('errorContainer');
-    const errorMessage = document.getElementById('errorMessage');
-    const downloadSection = document.getElementById('downloadSection');
-    const downloadLink = document.getElementById('downloadLink');
-    // Pricing elements
-    const basePriceEl = document.getElementById('basePrice');
-    const priorityPriceEl = document.getElementById('priorityPrice');
-    const transcriptPriceEl = document.getElementById('transcriptPrice');
-    const taxAmountEl = document.getElementById('taxAmount');
-    const totalAmountEl = document.getElementById('totalAmount');
-    // Stepper elements
-    const step1 = document.getElementById('step1');
-    const step2 = document.getElementById('step2');
-    const step3 = document.getElementById('step3');
-    const step4 = document.getElementById('step4');
+console.log("MailSized script version: v6.2");
 
-    // State variables
-    let selectedProvider = 'gmail';
-    let jobId = null;
-    let basePrice = 0.0;
-    let eventSource = null;
+document.addEventListener("DOMContentLoaded", () => {
+  // ---- Elements
+  const uploadArea = document.getElementById("uploadArea");
+  const fileInput = document.getElementById("fileInput");
+  const fileInfo = document.getElementById("fileInfo");
+  const fileName = document.getElementById("fileName");
+  const fileSize = document.getElementById("fileSize");
+  const fileDuration = document.getElementById("fileDuration");
+  const removeFile = document.getElementById("removeFile");
 
-    // Utility functions
-    function resetSteps() {
-        step1.classList.remove('active');
-        step2.classList.remove('active');
-        step3.classList.remove('active');
-        step4.classList.remove('active');
-    }
-    function setActiveStep(step) {
-        resetSteps();
-        if (step >= 1) step1.classList.add('active');
-        if (step >= 2) step2.classList.add('active');
-        if (step >= 3) step3.classList.add('active');
-        if (step >= 4) step4.classList.add('active');
-    }
-    function showError(msg) {
-        errorMessage.textContent = msg;
-        errorContainer.style.display = 'block';
-    }
-    function hideError() {
-        errorContainer.style.display = 'none';
-        errorMessage.textContent = '';
-    }
-    function formatFileSize(bytes) {
-        if (bytes < 1024) return bytes + ' bytes';
-        else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-        else if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-        else return (bytes / 1073741824).toFixed(1) + ' GB';
-    }
-    function formatDuration(seconds) {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs < 10 ? '0' : ''}${secs} min`;
-    }
-    function updatePriceSummary() {
-        const priorityCost = priorityCheckbox.checked ? 0.75 : 0;
-        const transcriptCost = transcriptCheckbox.checked ? 1.50 : 0;
-        const subtotal = basePrice + priorityCost + transcriptCost;
-        const tax = subtotal * 0.10;
-        const total = subtotal + tax;
-        basePriceEl.textContent = `$${basePrice.toFixed(2)}`;
-        priorityPriceEl.textContent = `$${priorityCost.toFixed(2)}`;
-        transcriptPriceEl.textContent = `$${transcriptCost.toFixed(2)}`;
-        taxAmountEl.textContent = `$${tax.toFixed(2)}`;
-        totalAmountEl.textContent = `$${total.toFixed(2)}`;
-    }
+  const providerCards = document.querySelectorAll(".provider-card");
+  const priorityCheckbox = document.getElementById("priority");
+  const transcriptCheckbox = document.getElementById("transcript");
+  const userEmail = document.getElementById("userEmail");
+  const agreeCheckbox = document.getElementById("agree");
 
-    // Provider selection handling
-    providerCards.forEach(card => {
-        card.addEventListener('click', () => {
-            providerCards.forEach(c => c.classList.remove('selected'));
-            card.classList.add('selected');
-            selectedProvider = card.dataset.provider;
-            updatePriceSummary();
-        });
-    });
+  const basePrice = document.getElementById("basePrice");
+  const priorityPrice = document.getElementById("priorityPrice");
+  const transcriptPrice = document.getElementById("transcriptPrice");
+  const taxAmount = document.getElementById("taxAmount");
+  const totalAmount = document.getElementById("totalAmount");
 
-    // Extra options change
-    priorityCheckbox.addEventListener('change', updatePriceSummary);
-    transcriptCheckbox.addEventListener('change', updatePriceSummary);
+  const processButton = document.getElementById("processButton");
+  const errorContainer = document.getElementById("errorContainer");
+  const errorMessage = document.getElementById("errorMessage");
 
-    // File upload interactions
-    uploadArea.addEventListener('click', () => {
-        fileInput.click();
-    });
-    uploadArea.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        uploadArea.classList.add('dragover');
-    });
-    uploadArea.addEventListener('dragleave', () => {
-        uploadArea.classList.remove('dragover');
-    });
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadArea.classList.remove('dragover');
-        if (e.dataTransfer.files.length) {
-            handleFile(e.dataTransfer.files[0]);
-        }
-    });
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length) {
-            handleFile(e.target.files[0]);
-        }
-    });
-    removeFileBtn.addEventListener('click', () => {
-        fileInput.value = '';
-        fileInfo.style.display = 'none';
-        jobId = null;
-        basePrice = 0;
-        updatePriceSummary();
-        setActiveStep(1);
-    });
+  const livePanel = document.getElementById("livePanel");
+  const liveStatus = document.getElementById("liveStatus");
+  const livePct = document.getElementById("livePct");
+  const liveBar = document.getElementById("liveBar");
+  const downloadSection = document.getElementById("downloadSection");
+  const downloadLink = document.getElementById("downloadLink");
 
-    async function handleFile(file) {
-        hideError();
-        downloadSection.style.display = 'none';
-        // Validate extension client‑side
-        const allowed = ['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/x-msvideo'];
-        if (!allowed.includes(file.type)) {
-            showError('Please upload a video file (MP4, MOV, AVI, MKV)');
-            return;
-        }
-        // Check size (2 GB)
-        const maxBytes = 2 * 1024 * 1024 * 1024;
-        if (file.size > maxBytes) {
-            showError('File size exceeds maximum limit of 2GB');
-            return;
-        }
-        // Show file info immediately; duration will be updated after upload call
-        fileNameEl.textContent = file.name;
-        fileSizeEl.textContent = formatFileSize(file.size);
-        fileDurationEl.textContent = '...';
-        fileInfo.style.display = 'flex';
-        // Begin uploading to server for probing
-        setActiveStep(1);
-        processButton.disabled = true;
-        processButton.innerHTML = '<span class="loading"></span> Uploading...';
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const response = await fetch('/upload', {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) {
-                let errMsg = 'Upload failed';
-                try {
-                    const err = await response.json();
-                    errMsg = err.detail || errMsg;
-                } catch {}
-                throw new Error(errMsg);
-            }
-            const data = await response.json();
-            jobId = data.job_id;
-            basePrice = data.price;
-            // Update file info with probed size/duration
-            fileSizeEl.textContent = formatFileSize(data.size_bytes);
-            fileDurationEl.textContent = formatDuration(data.duration_sec);
-            updatePriceSummary();
-            setActiveStep(2);
-            processButton.disabled = false;
-            processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
-        } catch (err) {
-            console.error(err);
-            showError(err.message);
-            processButton.disabled = false;
-            processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
-        }
+  // ---- State
+  let selectedProvider = "gmail";
+  let UPLOAD_DATA = null; // server response after /upload
+
+  // ---- Pricing
+  const PROVIDER_PRICING = {
+    gmail:   [1.99, 2.99, 4.49],
+    outlook: [2.19, 3.29, 4.99],
+    other:   [2.49, 3.99, 5.49],
+  };
+
+  // Utility
+  const fmtMoney = (n) => `$${Number(n).toFixed(2)}`;
+  const showError = (msg) => {
+    errorMessage.textContent = msg;
+    errorContainer.style.display = "block";
+    errorContainer.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  const hideError = () => (errorContainer.style.display = "none");
+
+  // ---- Step header helpers
+  function setStepActive(idx) {
+    [1, 2, 3, 4].forEach((i) => {
+      document.getElementById(`step${i}`).classList.toggle("active", i === idx);
+    });
+  }
+
+  // ---- Pricing calc
+  function currentTier() {
+    if (!UPLOAD_DATA) return 1;
+    return Number(UPLOAD_DATA.tier || 1); // 1..3
+  }
+
+  function calculateTotal() {
+    const tier = currentTier();
+    const base =
+      selectedProvider === "outlook"
+        ? PROVIDER_PRICING.outlook[tier - 1]
+        : selectedProvider === "other"
+        ? PROVIDER_PRICING.other[tier - 1]
+        : PROVIDER_PRICING.gmail[tier - 1];
+
+    const pr = priorityCheckbox.checked ? 0.75 : 0;
+    const tr = transcriptCheckbox.checked ? 1.50 : 0;
+    const sub = base + pr + tr;
+    const tax = sub * 0.1;
+    const tot = sub + tax;
+
+    basePrice.textContent = fmtMoney(base);
+    priorityPrice.textContent = fmtMoney(pr);
+    transcriptPrice.textContent = fmtMoney(tr);
+    taxAmount.textContent = fmtMoney(tax);
+    totalAmount.textContent = fmtMoney(tot);
+  }
+
+  // ---- Provider selection
+  providerCards.forEach((card) => {
+    card.addEventListener("click", () => {
+      providerCards.forEach((c) => c.classList.remove("selected"));
+      card.classList.add("selected");
+      selectedProvider = card.dataset.provider;
+      calculateTotal();
+    });
+  });
+
+  priorityCheckbox.addEventListener("change", calculateTotal);
+  transcriptCheckbox.addEventListener("change", calculateTotal);
+
+  // ---- Upload interactions
+  uploadArea.addEventListener("click", () => fileInput.click());
+
+  uploadArea.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    uploadArea.classList.add("dragover");
+  });
+
+  uploadArea.addEventListener("dragleave", () => {
+    uploadArea.classList.remove("dragover");
+  });
+
+  uploadArea.addEventListener("drop", (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove("dragover");
+    if (e.dataTransfer.files.length) {
+      handleLocalFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    if (e.target.files.length) handleLocalFile(e.target.files[0]);
+  });
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} bytes`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+    return `${(bytes / 1073741824).toFixed(1)} GB`;
+  }
+
+  function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? "0" : ""}${secs} min`;
+  }
+
+  async function handleLocalFile(file) {
+    hideError();
+
+    if (!file.type.startsWith("video/")) {
+      showError("Please upload a video file (MP4, MOV, AVI, MKV).");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      showError("File size exceeds maximum limit of 2GB.");
+      return;
     }
 
-    // Checkout and start compression
-    processButton.addEventListener('click', async () => {
-        hideError();
-        if (!fileInput.files.length) {
-            showError('Please upload a video file');
-            return;
-        }
-        if (!agreeCheckbox.checked) {
-            showError('You must agree to the Terms & Conditions');
-            return;
-        }
-        if (!jobId) {
-            showError('File validation failed');
-            return;
-        }
-        // Disable button and show loading
-        processButton.disabled = true;
-        processButton.innerHTML = '<span class="loading"></span> Processing...';
-        // Prepare form data for checkout
-        const formData = new FormData();
-        formData.append('job_id', jobId);
-        formData.append('provider', selectedProvider);
-        formData.append('priority', priorityCheckbox.checked);
-        formData.append('transcript', transcriptCheckbox.checked);
-        formData.append('email', emailInput.value);
-        try {
-            const response = await fetch('/checkout', {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) {
-                let errMsg = 'Checkout failed';
-                try {
-                    const err = await response.json();
-                    errMsg = err.detail || errMsg;
-                } catch {}
-                throw new Error(errMsg);
-            }
-            await response.json();
-            setActiveStep(3);
-            // Start listening to SSE
-            if (eventSource) {
-                eventSource.close();
-            }
-            eventSource = new EventSource(`/events/${jobId}`);
-            eventSource.onmessage = function(ev) {
-                const payload = JSON.parse(ev.data);
-                const status = payload.status;
-                if (status === 'processing') {
-                    setActiveStep(3);
-                } else if (status === 'compressing') {
-                    setActiveStep(3);
-                } else if (status === 'finalizing') {
-                    setActiveStep(3);
-                } else if (status === 'done') {
-                    setActiveStep(4);
-                    // Show download link
-                    if (payload.download_url) {
-                        downloadLink.href = payload.download_url;
-                        downloadSection.style.display = 'block';
-                    }
-                    processButton.innerHTML = '<i class="fas fa-check"></i> Completed';
-                    processButton.disabled = true;
-                    eventSource.close();
-                } else if (status === 'error') {
-                    showError('An error occurred during processing');
-                    processButton.innerHTML = '<i class="fas fa-times"></i> Error';
-                    processButton.disabled = false;
-                    eventSource.close();
-                }
-            };
-        } catch (err) {
-            console.error(err);
-            showError(err.message);
-            processButton.disabled = false;
-            processButton.innerHTML = '<i class="fas fa-credit-card"></i> Pay & Compress';
-        }
+    // optimistic UI
+    fileInfo.style.display = "flex";
+    fileName.textContent = file.name;
+    fileSize.textContent = formatBytes(file.size);
+    fileDuration.textContent = "Checking duration…";
+
+    // upload to server
+    setStepActive(1);
+    const fd = new FormData();
+    fd.append("file", file);
+
+    try {
+      const res = await fetch("/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Upload failed (${res.status})`);
+      }
+      const data = await res.json();
+      UPLOAD_DATA = data;
+
+      // update meta
+      fileDuration.textContent = formatDuration(data.duration_sec || 0);
+      calculateTotal();
+
+      // Move wizard to Payment
+      setStepActive(2);
+    } catch (err) {
+      fileInfo.style.display = "none";
+      showError(err.message || "Upload failed.");
+    }
+  }
+
+  removeFile.addEventListener("click", () => {
+    fileInput.value = "";
+    fileInfo.style.display = "none";
+    UPLOAD_DATA = null;
+    calculateTotal();
+    setStepActive(1);
+  });
+
+  // ---- Start Checkout
+  processButton.addEventListener("click", async () => {
+    hideError();
+
+    if (!UPLOAD_DATA) {
+      showError("Please upload a video file.");
+      return;
+    }
+    if (!agreeCheckbox.checked) {
+      showError("You must agree to the Terms & Conditions.");
+      return;
+    }
+
+    // visual loading
+    processButton.disabled = true;
+    const original = processButton.innerHTML;
+    processButton.innerHTML = '<span class="loading"></span> Starting checkout…';
+
+    const body = new URLSearchParams({
+      job_id: UPLOAD_DATA.job_id,
+      provider: selectedProvider,
+      priority: String(!!priorityCheckbox.checked),
+      transcript: String(!!transcriptCheckbox.checked),
+      email: (userEmail.value || "").trim(),
     });
+
+    try {
+      const res = await fetch("/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Could not start payment (HTTP ${res.status}).`);
+      }
+
+      const { checkout_url } = await res.json();
+      // hand over to Stripe
+      window.location.href = checkout_url;
+    } catch (err) {
+      showError(err.message || "Could not start payment.");
+      processButton.disabled = false;
+      processButton.innerHTML = original;
+    }
+  });
+
+  // ---- After Stripe: handle ?paid=1&job_id=...
+  const qp = new URLSearchParams(window.location.search);
+  if (qp.get("paid") === "1" && qp.get("job_id")) {
+    const jid = qp.get("job_id");
+    setStepActive(3);
+    livePanel.style.display = "block";
+    liveStatus.textContent = "Queued…";
+    livePct.textContent = "0%";
+    liveBar.style.width = "0%";
+
+    // Listen for SSE progress
+    const es = new EventSource(`/events/${jid}`);
+    es.onmessage = (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        if (payload.progress !== undefined) {
+          const p = Math.max(0, Math.min(100, Number(payload.progress)));
+          livePct.textContent = `${p}%`;
+          liveBar.style.width = `${p}%`;
+        }
+        if (payload.status) {
+          liveStatus.textContent =
+            payload.status === "processing" ? "Processing…" :
+            payload.status === "compressing" ? "Compressing…" :
+            payload.status === "finalizing" ? "Finalizing…" :
+            payload.status === "done" ? "Done!" :
+            payload.status === "error" ? "Error" : payload.status;
+        }
+        if (payload.download_url) {
+          setStepActive(4);
+          downloadSection.style.display = "block";
+          downloadLink.href = payload.download_url;
+          // stop listening
+          es.close();
+        }
+      } catch (_) {}
+    };
+    es.onerror = () => {
+      // Keep UI but indicate server stream problem
+      liveStatus.textContent = "Working… (connection hiccup)";
+    };
+  }
+
+  // initial totals
+  calculateTotal();
 });
