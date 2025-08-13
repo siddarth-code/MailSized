@@ -1,95 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <meta http-equiv="Cache-Control" content="no-store"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store" />
   <title>MailSized – Send Large Videos via Email</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
-  <link rel="stylesheet" href="/static/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
   {{ adsense_tag|safe }}
 </head>
 <body>
-<div class="container">
-  <header>
-    <div class="logo"><i class="fas fa-film"></i><h1>MailSized</h1></div>
-    <p>Compress large videos to fit email attachments</p>
-    <div class="chips"><span>≤2GB files</span><span>≤20 min videos</span></div>
-  </header>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <div class="logo-icon"><i class="fas fa-video"></i></div>
+        <h1>MailSized</h1>
+      </div>
+      <p>Compress large videos to fit email attachments</p>
+      <div style="display:flex;justify-content:center;gap:15px;margin-top:10px;">
+        <div class="constraint"><i class="fas fa-file"></i><span>≤2GB files</span></div>
+        <div class="constraint"><i class="fas fa-clock"></i><span>≤20 min videos</span></div>
+      </div>
+    </header>
 
-  <div class="main">
-    <div class="card">
-      <div class="steps">
-        <div class="step active">1. Upload</div>
-        <div class="step">2. Payment</div>
-        <div class="step">3. Compression</div>
-        <div class="step">4. Download</div>
+    <div class="card-container">
+      <div class="main-card">
+        <div class="progress-bar">
+          <div id="step1" class="progress-step active">1. Upload</div>
+          <div id="step2" class="progress-step">2. Payment</div>
+          <div id="step3" class="progress-step">3. Compression</div>
+          <div id="step4" class="progress-step">4. Download</div>
+        </div>
+
+        <div class="step-content">
+          <h2 class="step-title"><i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video</h2>
+
+          <div class="upload-area" id="uploadArea">
+            <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+            <h3>Click to browse or drag &amp; drop your video</h3>
+            <p>Max file size: 2GB</p>
+            <p>Supported formats: MP4, MOV, AVI, MKV</p>
+            <input type="file" id="fileInput" accept="video/*" style="display:none;" />
+          </div>
+
+          <div class="file-info" id="fileInfo" style="display:none;">
+            <div class="file-icon"><i class="fas fa-file-video"></i></div>
+            <div class="file-details">
+              <div class="file-name" id="fileName"></div>
+              <div class="file-meta">
+                <span id="fileSize"></span>
+                <span id="fileDuration"></span>
+              </div>
+            </div>
+            <button class="remove-file" id="removeFile"><i class="fas fa-times"></i></button>
+          </div>
+
+          <h2 class="step-title"><i class="fas fa-envelope"></i> 2. Select Email Provider</h2>
+          <div class="providers" id="providers">
+            <div class="provider-card gmail selected" data-provider="gmail">
+              <div class="provider-icon"><i class="fab fa-google"></i></div>
+              <div class="provider-name">Gmail</div>
+              <div class="provider-details">
+                <div>Max attachment: 25MB</div>
+                <div class="provider-price">$1.99 – $4.99</div>
+              </div>
+            </div>
+            <div class="provider-card outlook" data-provider="outlook">
+              <div class="provider-icon"><i class="fab fa-microsoft"></i></div>
+              <div class="provider-name">Outlook</div>
+              <div class="provider-details">
+                <div>Max attachment: 20MB</div>
+                <div class="provider-price">$2.19 – $4.99</div>
+              </div>
+            </div>
+            <div class="provider-card other" data-provider="other">
+              <div class="provider-icon"><i class="fas fa-envelope"></i></div>
+              <div class="provider-name">Other</div>
+              <div class="provider-details">
+                <div>Max attachment: 15MB</div>
+                <div class="provider-price">$2.49 – $5.49</div>
+              </div>
+            </div>
+          </div>
+
+          <h2 class="step-title"><i class="fas fa-star"></i> 3. Add Extras</h2>
+          <div class="extras">
+            <div class="extra-option">
+              <input type="checkbox" id="priority" />
+              <label class="extra-label" for="priority">Priority Processing</label>
+              <div class="extra-price">+ $0.75</div>
+            </div>
+            <div class="extra-option">
+              <input type="checkbox" id="transcript" />
+              <label class="extra-label" for="transcript">Video Transcript</label>
+              <div class="extra-price">+ $1.50</div>
+            </div>
+          </div>
+
+          <div class="email-input">
+            <label for="userEmail">Your email (optional):</label>
+            <input type="email" id="userEmail" placeholder="you@example.com" />
+          </div>
+
+          <div class="payment-agreement">
+            <input type="checkbox" id="agree" />
+            <label for="agree">I agree to the <a href="/terms" class="terms-link">Terms &amp; Conditions</a> (service is non‑refundable)</label>
+          </div>
+
+          <div class="error-container" id="errorContainer" style="display:none;">
+            <div class="error-title">
+              <i class="fas fa-exclamation-circle"></i><span>Error</span>
+            </div>
+            <div id="errorMessage"></div>
+          </div>
+
+          <button class="action-button" id="processButton">
+            <i class="fas fa-credit-card"></i> Pay &amp; Compress
+          </button>
+
+          <!-- Live progress after payment -->
+          <div id="progressContainer" style="display:none;margin-top:14px;">
+            <div class="progress-title"><i class="fas fa-spinner fa-spin"></i> Compression in progress…</div>
+            <div class="progress-outer">
+              <div id="progressBar" class="progress-inner" style="width:2%;"></div>
+            </div>
+            <div id="progressText" class="progress-text">2% — Working…</div>
+          </div>
+
+          <!-- Download -->
+          <div id="downloadSection" style="display:none;margin-top:20px;">
+            <a id="downloadLink" class="action-button" href="#" download>
+              <i class="fas fa-download"></i> Download Compressed Video
+            </a>
+            <p style="margin-top:8px;font-size:0.9rem;color:#4a5568;">We’ve also emailed your file.</p>
+          </div>
+        </div>
       </div>
 
-      <h2>1. Upload Your Video</h2>
-      <div id="uploadArea" class="upload">
-        <i class="fas fa-cloud-upload-alt"></i>
-        <h3>Click to browse or drag & drop your video</h3>
-        <p>Max file size: 2GB • Formats: MP4, MOV, AVI, MKV</p>
-        <input id="fileInput" type="file" accept="video/*" hidden>
-      </div>
-      <div id="fileInfo" class="file-info hidden">
-        <div><i class="fas fa-file-video"></i> <span id="fileName"></span></div>
-        <div class="muted"><span id="fileSize"></span> • <span id="fileDuration"></span></div>
-        <button id="removeFile" class="link small"><i class="fas fa-times"></i> remove</button>
-      </div>
+      <div class="info-card">
+        <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
+        <table class="pricing-table">
+          <thead>
+            <tr><th>Duration</th><th>Max Size</th><th>Gmail</th><th>Outlook</th><th>Other</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>≤5 min</td><td>≤500 MB</td><td>$1.99</td><td>$2.19</td><td>$2.49</td></tr>
+            <tr><td>≤10 min</td><td>≤1 GB</td><td>$2.99</td><td>$3.29</td><td>$3.99</td></tr>
+            <tr><td>≤20 min</td><td>≤2 GB</td><td>$4.99</td><td>$4.99</td><td>$5.49</td></tr>
+          </tbody>
+        </table>
 
-      <h2>2. Select Email Provider</h2>
-      <div class="providers">
-        <button class="provider selected" data-provider="gmail"><i class="fab fa-google"></i> Gmail<span>25MB</span></button>
-        <button class="provider" data-provider="outlook"><i class="fab fa-microsoft"></i> Outlook<span>20MB</span></button>
-        <button class="provider" data-provider="other"><i class="fas fa-envelope"></i> Other<span>15MB</span></button>
-      </div>
+        <div class="price-summary">
+          <div class="price-item"><span>Base compression:</span><span id="basePrice">$0.00</span></div>
+          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
+          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
+          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
+          <div class="price-total"><span>Total:</span><span id="totalAmount">$0.00</span></div>
+        </div>
 
-      <h2>3. Add Extras</h2>
-      <label class="row"><input id="priority" type="checkbox"> Priority Processing <span class="price">+ $0.75</span></label>
-      <label class="row"><input id="transcript" type="checkbox"> Video Transcript <span class="price">+ $1.50</span></label>
-
-      <div class="row"><input id="userEmail" type="email" placeholder="Your email (optional)"></div>
-      <label class="row"><input id="agree" type="checkbox"> I agree to the <a href="/terms" target="_blank">Terms & Conditions</a> (non‑refundable)</label>
-
-      <div id="errorBox" class="error hidden"></div>
-
-      <button id="payBtn" class="primary"><i class="fas fa-credit-card"></i> Pay & Compress</button>
-
-      <div id="progressWrap" class="progress hidden">
-        <div class="bar"><div id="progressBar"></div></div>
-        <div class="muted" id="progressText">Working…</div>
-      </div>
-
-      <div id="downloadWrap" class="hidden">
-        <a id="downloadLink" class="primary" href="#" download><i class="fas fa-download"></i> Download Compressed Video</a>
-        <p class="muted">We’ve also emailed your file.</p>
+        <div id="ad-slot-sidebar" class="hidden lg:block w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250">
+          <div class="text-sm text-gray-500">Sponsored • placeholder</div>
+        </div>
+        <div id="ad-slot-inline" class="block lg:hidden w-full rounded-2xl shadow-sm p-3 border bg-white mt-4" style="min-height:120px;" data-ad-slot="inline-320x100">
+          <div class="text-xs text-gray-500">Sponsored • placeholder</div>
+        </div>
       </div>
     </div>
-
-    <aside class="card">
-      <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
-      <table class="table">
-        <thead><tr><th>Duration</th><th>Max Size</th><th>Gmail</th><th>Outlook</th><th>Other</th></tr></thead>
-        <tbody>
-          <tr><td>≤5 min</td><td>≤500 MB</td><td>$1.99</td><td>$2.19</td><td>$2.49</td></tr>
-          <tr><td>≤10 min</td><td>≤1 GB</td><td>$2.99</td><td>$3.29</td><td>$3.99</td></tr>
-          <tr><td>≤20 min</td><td>≤2 GB</td><td>$4.99</td><td>$4.99</td><td>$5.49</td></tr>
-        </tbody>
-      </table>
-      <div class="summary">
-        <div><span>Base compression:</span><span id="basePrice">$0.00</span></div>
-        <div><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
-        <div><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
-        <div><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
-        <div class="total"><span>Total:</span><span id="totalAmount">$0.00</span></div>
-      </div>
-      <div id="ad-slot-sidebar" class="ad">Sponsored • placeholder</div>
-    </aside>
   </div>
-</div>
 
-<script src="/static/script.js?v=2025-08-13-1"></script>
+  <script src="/static/script.js?v=2025-08-13-1"></script>
+  <script>
+    if (window.adsbygoogle) {
+      const slots = [{id:'ad-slot-sidebar',slot:'sidebar-300x250'},{id:'ad-slot-inline',slot:'inline-320x100'}];
+      slots.forEach(s => {
+        const el = document.getElementById(s.id);
+        if (!el) return;
+        const ins = document.createElement('ins');
+        ins.className = 'adsbygoogle';
+        ins.style.display = 'block';
+        ins.setAttribute('data-ad-client', '{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot', s.slot);
+        ins.setAttribute('data-full-width-responsive', 'true');
+        el.innerHTML = '';
+        el.appendChild(ins);
+        (adsbygoogle = window.adsbygoogle || []).push({});
+      });
+    }
+  </script>
 </body>
 </html>
