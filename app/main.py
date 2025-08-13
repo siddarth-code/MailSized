@@ -23,7 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
+async def http_exc_handler(request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
 # ────────────── Config ──────────────
 
 logging.basicConfig(level=logging.INFO)
