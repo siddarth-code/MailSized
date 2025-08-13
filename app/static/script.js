@@ -1,205 +1,255 @@
-/* MailSized front-end (v2025-08-13-fix-upload)
-   - Robust upload handler (shows real server errors)
-   - Defensive DOM writes (won’t crash if an element is missing)
-   - Pricing calc won’t throw if a node is absent
-*/
+/* MailSized front-end – v6-robust */
 
-console.log("Mailsized script version: v6-fix-upload");
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const qs = (sel, root = document) => root.querySelector(sel);
+  const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const safeSet = (id, text) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+  const show = (id) => { const el = $(id); if (el) el.style.display = ''; };
+  const hide = (id) => { const el = $(id); if (el) el.style.display = 'none'; };
 
-//
-// ---------- Small DOM helpers ----------
-//
-const byId = (id) => document.getElementById(id);
-const setText = (id, text) => { const el = byId(id); if (el) el.textContent = text; };
-const show    = (id) => { const el = byId(id); if (el) el.style.display = ""; };
-const hide    = (id) => { const el = byId(id); if (el) el.style.display = "none"; };
-const addCls  = (el, c) => el && el.classList && el.classList.add(c);
-const rmCls   = (el, c) => el && el.classList && el.classList.remove(c);
+  // Version log so we know which JS is running
+  console.log('Mailsized script version: v6-progress');
 
-const $ = {
-  fileInput:     byId("fileInput"),
-  uploadArea:    byId("uploadArea"),
-  fileInfo:      byId("fileInfo"),
-  fileName:      byId("fileName"),
-  fileSize:      byId("fileSize"),
-  fileDuration:  byId("fileDuration"),
-  removeFile:    byId("removeFile"),
-  providers:     document.querySelectorAll(".provider-card"),
-  errorBox:      byId("errorContainer"),
-  errorMsg:      byId("errorMessage"),
-  agree:         byId("agree"),
-  priority:      byId("priority"),
-  transcript:    byId("transcript"),
-  email:         byId("userEmail"),
-  payBtn:        byId("processButton"),
-  progressWrap:  byId("progressWrap"),     // may not exist yet
-  progressBar:   byId("progressBar"),      // may not exist yet
-  progressPct:   byId("progressPct"),      // may not exist yet
-  downloadSect:  byId("downloadSection"),
-  downloadLink:  byId("downloadLink"),
-};
+  // --- State ---
+  let JOB = null;            // { job_id, tier, price, duration_sec, size_bytes, max_size_mb, ... }
+  let PROVIDER = 'gmail';    // gmail | outlook | other
 
-let STATE = {
-  jobId: null,
-  tier: null,
-  provider: "gmail",
-  basePrice: 0,
-  durationSec: 0,
-  sizeBytes: 0
-};
+  const PROVIDER_PRICING = {
+    gmail:   [1.99, 2.99, 4.99],
+    outlook: [2.19, 3.29, 4.99],
+    other:   [2.49, 3.99, 5.49]
+  };
 
-//
-// ---------- Utility: money & bytes ----------
-//
-const fmtUSD = (n) => `$${n.toFixed(2)}`;
-const bytesToMB = (b) => (b / (1024 * 1024));
-const humanBytes = (b) => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024*1024) return `${(b/1024).toFixed(1)} KB`;
-  return `${(b/1024/1024).toFixed(1)} MB`;
-};
+  // --- UI helpers ---
+  function setError(msg) {
+    const box = $('errorContainer');
+    const msgEl = $('errorMessage');
+    if (msgEl) msgEl.textContent = msg || '';
+    if (box) box.style.display = msg ? '' : 'none';
+  }
 
-//
-// ---------- Error UI ----------
-//
-function showError(msg) {
-  if ($.errorMsg) $.errorMsg.textContent = msg || "Something went wrong.";
-  show("errorContainer");
-}
-function clearError() {
-  hide("errorContainer");
-  if ($.errorMsg) $.errorMsg.textContent = "";
-}
+  function setStep(active) {
+    ['step1','step2','step3','step4'].forEach((id, idx) => {
+      const el = $(id); if (!el) return;
+      if (idx === active - 1) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+  }
 
-//
-// ---------- Pricing (defensive) ----------
-//
-function calcTotals() {
-  // Base price comes from backend tier; provider cards only change which base we display server-side later
-  const base = Number($.payBtn?.dataset.base || STATE.basePrice || 0);
-  const pri  = $.priority?.checked ? 0.75 : 0;
-  const trn  = $.transcript?.checked ? 1.50 : 0;
-  const subtotal = base + pri + trn;
-  const tax = +(subtotal * 0.10).toFixed(2);
-  const total = +(subtotal + tax).toFixed(2);
+  function humanBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024*1024) return `${(n/1024).toFixed(1)} KB`;
+    if (n < 1024*1024*1024) return `${(n/1024/1024).toFixed(1)} MB`;
+    return `${(n/1024/1024/1024).toFixed(2)} GB`;
+  }
 
-  setText("basePrice", fmtUSD(base));
-  setText("priorityPrice", fmtUSD(pri));
-  setText("transcriptPrice", fmtUSD(trn));
-  setText("taxAmount", fmtUSD(tax));
-  setText("totalAmount", fmtUSD(total));
-}
+  function humanTime(sec) {
+    const m = Math.floor(sec/60), s = Math.round(sec%60);
+    return `${m}m ${s}s`;
+  }
 
-//
-// ---------- Provider selection ----------
-//
-function selectProvider(code) {
-  STATE.provider = code;
-  $.providers.forEach(card => {
-    if (card.dataset.provider === code) addCls(card, "selected");
-    else rmCls(card, "selected");
-  });
-  // Recalc UI (safe even if some nodes are missing)
-  calcTotals();
-}
-
-$.providers.forEach(card => {
-  card.addEventListener("click", () => selectProvider(card.dataset.provider));
-});
-
-//
-// ---------- Upload interactions ----------
-//
-if ($.uploadArea && $.fileInput) {
-  $.uploadArea.addEventListener("click", () => $.fileInput.click());
-  $.uploadArea.addEventListener("dragover", (e) => { e.preventDefault(); addCls($.uploadArea, "dragover"); });
-  $.uploadArea.addEventListener("dragleave", (e) => { e.preventDefault(); rmCls($.uploadArea, "dragover"); });
-  $.uploadArea.addEventListener("drop", (e) => {
-    e.preventDefault(); rmCls($.uploadArea, "dragover");
-    if (e.dataTransfer?.files?.[0]) {
-      $.fileInput.files = e.dataTransfer.files;
-      handleFileChosen();
+  // Price box
+  function calcTotals() {
+    // guard if upload hasn't happened yet
+    if (!JOB) { 
+      safeSet('basePrice', '$0.00');
+      safeSet('priorityPrice', '$0.00');
+      safeSet('transcriptPrice', '$0.00');
+      safeSet('taxAmount', '$0.00');
+      safeSet('totalAmount', '$0.00');
+      return;
     }
+    const tier = Number(JOB.tier) || 1;
+    const base = PROVIDER_PRICING[PROVIDER][tier - 1] || 0;
+    const priority = $('priority')?.checked ? 0.75 : 0.0;
+    const transcript = $('transcript')?.checked ? 1.50 : 0.0;
+    const subtotal = base + priority + transcript;
+    const tax = +(subtotal * 0.10).toFixed(2);
+    const total = +(subtotal + tax).toFixed(2);
+
+    safeSet('basePrice', `$${base.toFixed(2)}`);
+    safeSet('priorityPrice', `$${priority.toFixed(2)}`);
+    safeSet('transcriptPrice', `$${transcript.toFixed(2)}`);
+    safeSet('taxAmount', `$${tax.toFixed(2)}`);
+    safeSet('totalAmount', `$${total.toFixed(2)}`);
+  }
+
+  // Progress
+  function setProgress(pct, text) {
+    const bar = $('progressBar');
+    const label = $('progressText');
+    if (bar) bar.style.width = `${Math.max(2, Math.min(100, pct))}%`;
+    if (label) label.textContent = text || `${pct}%`;
+  }
+
+  // --- Event wiring ---
+  document.addEventListener('DOMContentLoaded', () => {
+    // upload
+    const uploadArea = $('uploadArea');
+    const fileInput = $('fileInput');
+    const removeFile = $('removeFile');
+
+    if (uploadArea && fileInput) {
+      uploadArea.addEventListener('click', () => fileInput.click());
+      uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('drag'); });
+      uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault(); uploadArea.classList.remove('drag');
+        if (e.dataTransfer.files.length) {
+          fileInput.files = e.dataTransfer.files;
+          doUpload(fileInput.files[0]).catch(() => {});
+        }
+      });
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files?.length) doUpload(fileInput.files[0]).catch(() => {});
+      });
+    }
+
+    if (removeFile) {
+      removeFile.addEventListener('click', () => {
+        $('fileInfo')?.style && ( $('fileInfo').style.display = 'none' );
+        $('fileName') && ( $('fileName').textContent = '' );
+        $('fileSize') && ( $('fileSize').textContent = '' );
+        $('fileDuration') && ( $('fileDuration').textContent = '' );
+        fileInput && (fileInput.value = '');
+        JOB = null;
+        calcTotals();
+      });
+    }
+
+    // providers
+    qsa('.provider-card').forEach(card => {
+      card.addEventListener('click', () => {
+        qsa('.provider-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        PROVIDER = card.getAttribute('data-provider') || 'gmail';
+        calcTotals();
+      });
+    });
+
+    // extras
+    $('priority')?.addEventListener('change', calcTotals);
+    $('transcript')?.addEventListener('change', calcTotals);
+
+    // pay
+    $('processButton')?.addEventListener('click', onPay);
+
+    // if returning from Stripe
+    const params = new URLSearchParams(location.search);
+    if (params.get('paid') === '1' && params.get('job_id')) {
+      setStep(3);
+      show('progressContainer');
+      listenEvents(params.get('job_id'));
+    }
+
+    // initial prices
+    calcTotals();
   });
-  $.fileInput.addEventListener("change", handleFileChosen);
-}
 
-if ($.removeFile) {
-  $.removeFile.addEventListener("click", () => {
-    if ($.fileInput) $.fileInput.value = "";
-    STATE.jobId = null;
-    hide("fileInfo");
-    show("uploadArea");
-  });
-}
+  // --- Network actions ---
+  async function doUpload(file) {
+    setError('');
+    if (!file) return;
 
-async function handleFileChosen() {
-  clearError();
-  const f = $.fileInput?.files?.[0];
-  if (!f) return;
-
-  // Visuals
-  setText("fileName", f.name);
-  setText("fileSize", humanBytes(f.size));
-  hide("uploadArea");
-  show("fileInfo");
-
-  // Upload to backend
-  try {
-    $.payBtn && ($.payBtn.disabled = true);
-    $.payBtn && ($.payBtn.textContent = "Uploading…");
+    setStep(1);
+    setProgress(2, 'Uploading…');
 
     const fd = new FormData();
-    fd.append("file", f); // <— name MUST be "file" (matches FastAPI)
+    fd.append('file', file);
 
-    const res = await fetch("/upload", { method: "POST", body: fd });
-    // If server returned non-2xx, try to show the real error text
+    const res = await fetch('/upload', { method: 'POST', body: fd });
     if (!res.ok) {
-      const maybeText = await res.text().catch(() => "");
-      throw new Error(maybeText || `Upload failed (${res.status})`);
+      setError('Upload failed. Please try a smaller file or another format.');
+      throw new Error('upload failed');
     }
 
     const data = await res.json();
-    // Persist state from server
-    STATE.jobId       = data.job_id;
-    STATE.durationSec = data.duration_sec || 0;
-    STATE.sizeBytes   = data.size_bytes || f.size;
-    STATE.tier        = data.tier || null;
-    STATE.basePrice   = data.price || 0;
+    JOB = data; // includes job_id, tier, duration_sec, size_bytes, price, etc.
 
-    // Make base price available to calcTotals defensively
-    if ($.payBtn) $.payBtn.dataset.base = String(STATE.basePrice);
-
-    // Show duration (if probed)
-    if (data.duration_sec) setText("fileDuration", ` • ${(data.duration_sec/60).toFixed(1)} min`);
+    // show file info
+    $('fileInfo') && ( $('fileInfo').style.display = '' );
+    $('fileName') && ( $('fileName').textContent = file.name );
+    $('fileSize') && ( $('fileSize').textContent = `${humanBytes(data.size_bytes)}` );
+    $('fileDuration') && ( $('fileDuration').textContent = ` • ${humanTime(data.duration_sec)}` );
 
     calcTotals();
-
-    $.payBtn && ($.payBtn.disabled = false);
-    $.payBtn && ($.payBtn.textContent = "Pay & Compress");
-
-  } catch (err) {
-    console.error(err);
-    $.payBtn && ($.payBtn.disabled = false);
-    $.payBtn && ($.payBtn.textContent = "Pay & Compress");
-
-    // Don’t claim “Upload failed” generically — show the root cause
-    showError(err?.message || "Upload failed.");
-    // Return to chooser so the user can retry
-    show("uploadArea");
-    hide("fileInfo");
+    setError('');
   }
-}
 
-//
-// ---------- Extras change: keep totals in sync ----------
-//
-[$.priority, $.transcript].forEach(chk => chk && chk.addEventListener("change", calcTotals));
+  async function onPay() {
+    setError('');
 
-//
-// ---------- Payment & compression (unchanged here) ----------
-//   Your existing /checkout + SSE flow continues to work.
-//   The key fix in this file is:
-//   - upload handler now shows real server errors
-//   - DOM writes are guarded so they can’t crash the page
-//
+    if (!JOB?.job_id) { setError('Please upload a video first.'); return; }
+    if (!$('agree')?.checked) { setError('Please accept the Terms & Conditions.'); return; }
+
+    setStep(2);
+
+    const fd = new FormData();
+    fd.append('job_id', JOB.job_id);
+    fd.append('provider', PROVIDER);
+    fd.append('priority', $('priority')?.checked ? 'true' : 'false');
+    fd.append('transcript', $('transcript')?.checked ? 'true' : 'false');
+    fd.append('email', $('userEmail')?.value || '');
+
+    const res = await fetch('/checkout', { method: 'POST', body: fd });
+    if (!res.ok) { setError('Could not start payment.'); return; }
+
+    const data = await res.json();
+    if (data.checkout_url) {
+      // Stripe hosted page
+      window.location.href = data.checkout_url;
+    } else {
+      setError('Could not start payment.');
+    }
+  }
+
+  function listenEvents(jobId) {
+    try {
+      const es = new EventSource(`/events/${jobId}`);
+      let pct = 2;
+      const tick = setInterval(() => {
+        // just animate while waiting for server statuses
+        pct = Math.min(98, pct + 1);
+        setProgress(pct, `${pct}% — Working…`);
+      }, 1200);
+
+      es.onmessage = (ev) => {
+        const data = JSON.parse(ev.data || '{}');
+        if (data.status === 'processing') {
+          setProgress(15, 'Preparing…');
+        } else if (data.status === 'compressing') {
+          setProgress(50, 'Compressing…');
+        } else if (data.status === 'finalizing') {
+          setProgress(90, 'Finalizing…');
+        } else if (data.status === 'done') {
+          clearInterval(tick);
+          setProgress(100, 'Done!');
+          setStep(4);
+          if (data.download_url) {
+            show('downloadSection');
+            const a = $('downloadLink');
+            if (a) a.href = data.download_url;
+          }
+          es.close();
+        } else if (data.status === 'error') {
+          clearInterval(tick);
+          setError('An error occurred during processing.');
+          es.close();
+        }
+      };
+
+      es.onerror = () => {
+        // If the connection drops (e.g., 502 while server recycling), keep the UI alive
+        console.warn('SSE error; will keep animating until page refresh.');
+      };
+
+      show('progressContainer');
+    } catch (e) {
+      console.warn('SSE init failed', e);
+    }
+  }
+})();
