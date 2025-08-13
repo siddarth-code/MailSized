@@ -1,235 +1,272 @@
-/* MailSized script — v7.1 null-safe patch */
-console.log("MailSized script version: v7.1-nullsafe");
+/* MailSized front-end (robust DOM-safe version)
+   v6.3 — guards against missing pricing nodes and early calls
+*/
 
-// ---------- tiny helpers ----------
-const $ = (id) => document.getElementById(id) || null;
-const setText = (elOrId, text) => {
-  const el = typeof elOrId === "string" ? $(elOrId) : elOrId;
+console.log("Mailsized script version: v6.3-dom-guards");
+
+/* ---------- Helpers ---------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const byId = (id) => document.getElementById(id);
+
+// Safe text setter – silently skip if node missing
+function setText(id, text) {
+  const el = byId(id);
   if (el) el.textContent = text;
-};
-const show = (id, on) => { const el = $(id); if (el) el.style.display = on ? "" : "none"; };
+}
 
-// currency
-const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+// Currency helpers
+const fmt = (x) => `$${Number(x).toFixed(2)}`;
 
-// ---------- elements (may be null) ----------
-const uploadArea = $("uploadArea");
-const fileInput = $("fileInput");
-const fileInfo = $("fileInfo");
-const fileNameEl = $("fileName");
-const fileSizeEl = $("fileSize");
-const fileDurationEl = $("fileDuration");
-const removeFile = $("removeFile");
-
-const priorityCb = $("priority");
-const transcriptCb = $("transcript");
-const emailInput = $("userEmail");
-const agreeCb = $("agree");
-const processBtn = $("processButton");
-
-const errorBox = $("errorContainer");
-const errorMsg = $("errorMessage");
-const downloadSection = $("downloadSection");
-const downloadLink = $("downloadLink");
-
-const progressWrap = $("progressWrap");
-const progressBar = $("progressBar");
-const progressLabel = $("progressLabel");
-
-const providerCards = Array.from(document.querySelectorAll(".provider-card")) || [];
-
-// ---------- pricing tables ----------
+// Provider pricing table (by tier 1..3)
 const PROVIDER_PRICING = {
   gmail:   [1.99, 2.99, 4.99],
   outlook: [2.19, 3.29, 4.99],
   other:   [2.49, 3.99, 5.49],
 };
-const UPS_PRIORITY = 0.75;
-const UPS_TRANSCRIPT = 1.50;
-const TAX_RATE = 0.10;
 
-// ---------- state ----------
-let SELECTED_PROVIDER = "gmail";
+const UPSells = { priority: 0.75, transcript: 1.50 };
+
+// State the server gives back after /upload
+// { job_id, tier, ... }
 let UPLOAD_DATA = null;
 
-// ---------- ui helpers ----------
-const showError = (msg) => { setText(errorMsg, msg); show("errorContainer", true); };
-const clearError = () => show("errorContainer", false);
+// Which provider is currently selected
+function getSelectedProvider() {
+  const sel = $(".provider-card.selected");
+  return sel ? sel.dataset.provider : "gmail";
+}
 
-const setProgress = (pct, label) => {
-  if (progressWrap) progressWrap.style.display = "block";
-  if (progressBar)  progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  if (progressLabel) setText(progressLabel, label || "");
-};
-const resetProgress = () => { if (progressWrap) progressWrap.style.display = "none"; setProgress(0, ""); };
+// Tier → 1..3. If no upload yet, default to 1 so the UI doesn’t crash.
+function getTier() {
+  return UPLOAD_DATA?.tier ? Number(UPLOAD_DATA.tier) : 1;
+}
 
-const kib = (b) => (b / (1024 * 1024)).toFixed(1) + " MB";
-const prettyDur = (sec) => {
-  sec = Math.max(0, Math.round(sec || 0));
-  const m = Math.floor(sec / 60), s = sec % 60;
-  return `${m}:${String(s).padStart(2, "0")} min`;
-};
-
-// ---------- pricing ----------
-const tierBase = (provider, tier) => {
-  const arr = PROVIDER_PRICING[provider] || PROVIDER_PRICING.gmail;
-  const idx = Math.max(1, Math.min(3, Number(tier || 1))) - 1;
-  return arr[idx] || arr[0];
-};
-
+/* ---------- Pricing calc (DOM-safe) ---------- */
 function calcTotals() {
-  if (!UPLOAD_DATA) {
-    setText("basePrice", "$0.00");
-    setText("priorityPrice", "$0.00");
-    setText("transcriptPrice", "$0.00");
-    setText("taxAmount", "$0.00");
-    setText("totalAmount", "$0.00");
-    return;
-  }
-  const tier = Number(UPLOAD_DATA.tier || 1);
-  const base = tierBase(SELECTED_PROVIDER, tier);
-  const pri  = priorityCb && priorityCb.checked ? UPS_PRIORITY : 0;
-  const tra  = transcriptCb && transcriptCb.checked ? UPS_TRANSCRIPT : 0;
-  const subtotal = base + pri + tra;
-  const tax  = subtotal * TAX_RATE;
+  // If the pricing summary isn’t present on this page view, just skip
+  const mustExist = ["basePrice", "priorityPrice", "transcriptPrice", "taxAmount", "totalAmount"];
+  const missing = mustExist.some((id) => !byId(id));
+  if (missing) return;
+
+  const provider = getSelectedProvider();
+  const tier = getTier();
+
+  const base = PROVIDER_PRICING[provider][tier - 1] || 0;
+  const priority = byId("priority")?.checked ? UPSells.priority : 0;
+  const transcript = byId("transcript")?.checked ? UPSells.transcript : 0;
+
+  // Subtotal before tax (you’re currently just showing tax; not charging it on Stripe)
+  const subtotal = base + priority + transcript;
+  const tax = +(subtotal * 0.10).toFixed(2); // display only
   const total = subtotal + tax;
 
-  setText("basePrice",       money(base));
-  setText("priorityPrice",   money(pri));
-  setText("transcriptPrice", money(tra));   // <- null-safe now
-  setText("taxAmount",       money(tax));
-  setText("totalAmount",     money(total));
+  setText("basePrice",        fmt(base));
+  setText("priorityPrice",    fmt(priority));
+  setText("transcriptPrice",  fmt(transcript));
+  setText("taxAmount",        fmt(tax));
+  setText("totalAmount",      fmt(total));
 }
 
-// ---------- upload ----------
-async function doUpload(file) {
-  clearError();
-  resetProgress();
-  setProgress(2, "Uploading…");
+/* ---------- UI wiring ---------- */
+function selectProvider(card) {
+  $$(".provider-card").forEach((c) => c.classList.remove("selected"));
+  card.classList.add("selected");
+  calcTotals();
+}
+
+function wireProviders() {
+  $$(".provider-card").forEach((card) => {
+    card.addEventListener("click", () => selectProvider(card));
+  });
+}
+
+function wireUpsells() {
+  byId("priority")?.addEventListener("change", calcTotals);
+  byId("transcript")?.addEventListener("change", calcTotals);
+}
+
+/* ---------- Upload ---------- */
+async function postUpload(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const res = await fetch("/upload", { method: "POST", body: fd });
+  if (!res.ok) {
+    throw new Error(`Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+function showFileInfo(file, meta) {
+  const info = byId("fileInfo");
+  const nameEl = byId("fileName");
+  const sizeEl = byId("fileSize");
+  const durEl  = byId("fileDuration");
+
+  if (info) info.style.display = "flex";
+  if (nameEl) nameEl.textContent = file.name || "video";
+  if (sizeEl) sizeEl.textContent = `${(meta.size_bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (durEl)  durEl.textContent  = ` • ${(meta.duration_sec / 60).toFixed(2)} min`;
+}
+
+function showError(msg) {
+  const box = byId("errorContainer");
+  const text = byId("errorMessage");
+  if (box && text) {
+    text.textContent = msg;
+    box.style.display = "block";
+  } else {
+    alert(msg);
+  }
+}
+
+function hideError() {
+  const box = byId("errorContainer");
+  if (box) box.style.display = "none";
+}
+
+async function handleUpload(file) {
+  hideError();
   try {
-    const fd = new FormData();
-    fd.append("file", file);
-    const r = await fetch("/upload", { method: "POST", body: fd });
-    if (!r.ok) throw new Error(`Upload failed (${r.status})`);
-    const data = await r.json();
-
+    const data = await postUpload(file);
     UPLOAD_DATA = data;
-    if (fileInfo) fileInfo.style.display = "flex";
-    setText(fileNameEl, file.name || "video");
-    setText(fileSizeEl, kib(data.size_bytes));
-    setText(fileDurationEl, prettyDur(data.duration_sec));
-
+    showFileInfo(file, data);
+    // highlight the correct tier step if you have that UI
     calcTotals();
-    setProgress(5, "Ready for payment");
-  } catch (err) {
-    console.error(err);
+  } catch (e) {
+    console.error(e);
     showError("Upload failed");
+  }
+}
+
+function wireUpload() {
+  const drop = byId("uploadArea");
+  const input = byId("fileInput");
+  const removeBtn = byId("removeFile");
+
+  if (!drop || !input) return;
+
+  drop.addEventListener("click", () => input.click());
+  drop.addEventListener("dragover", (ev) => { ev.preventDefault(); drop.classList.add("drag"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+  drop.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    drop.classList.remove("drag");
+    if (ev.dataTransfer?.files?.length) {
+      handleUpload(ev.dataTransfer.files[0]);
+    }
+  });
+
+  input.addEventListener("change", () => {
+    if (input.files?.length) handleUpload(input.files[0]);
+  });
+
+  removeBtn?.addEventListener("click", () => {
     UPLOAD_DATA = null;
-    resetProgress();
+    const fi = byId("fileInfo");
+    if (fi) fi.style.display = "none";
+    input.value = "";
+    calcTotals(); // still safe
+  });
+}
+
+/* ---------- Checkout ---------- */
+async function startCheckout() {
+  hideError();
+  if (!UPLOAD_DATA?.job_id) {
+    showError("Please upload a video first.");
+    return;
+  }
+  if (!byId("agree")?.checked) {
+    showError("Please accept the Terms & Conditions.");
+    return;
+  }
+
+  const provider = getSelectedProvider();
+  const body = new URLSearchParams({
+    job_id: UPLOAD_DATA.job_id,
+    provider,
+    priority: byId("priority")?.checked ? "true" : "false",
+    transcript: byId("transcript")?.checked ? "true" : "false",
+    email: byId("userEmail")?.value?.trim() || "",
+  });
+
+  const res = await fetch("/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    showError("Could not start payment.");
+    return;
+  }
+
+  const data = await res.json();
+  if (data.checkout_url) {
+    window.location.href = data.checkout_url;
+  } else {
+    showError("Unexpected response from payment.");
   }
 }
 
-function setupUpload() {
-  if (uploadArea && fileInput) {
-    uploadArea.addEventListener("click", () => fileInput.click());
-    uploadArea.addEventListener("dragover", (e) => { e.preventDefault(); uploadArea.classList.add("dragover"); });
-    uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("dragover"));
-    uploadArea.addEventListener("drop", (e) => {
-      e.preventDefault(); uploadArea.classList.remove("dragover");
-      const f = e.dataTransfer?.files?.[0]; if (f) doUpload(f);
-    });
-    fileInput.addEventListener("change", () => {
-      const f = fileInput.files?.[0]; if (f) doUpload(f);
-    });
-  }
-  if (removeFile && fileInfo) {
-    removeFile.addEventListener("click", () => { UPLOAD_DATA = null; if (fileInput) fileInput.value = ""; fileInfo.style.display = "none"; resetProgress(); calcTotals(); });
-  }
-}
-
-// ---------- provider/extras ----------
-function setupProviderCards() {
-  providerCards.forEach((card) => {
-    card.addEventListener("click", () => {
-      SELECTED_PROVIDER = (card.dataset.provider || "gmail").toLowerCase();
-      providerCards.forEach((c) => c.classList.toggle("selected", c === card));
-      calcTotals();
+function wirePay() {
+  byId("processButton")?.addEventListener("click", () => {
+    startCheckout().catch((e) => {
+      console.error(e);
+      showError("Could not start payment.");
     });
   });
 }
-function setupExtras() {
-  if (priorityCb)  priorityCb.addEventListener("change", calcTotals);
-  if (transcriptCb) transcriptCb.addEventListener("change", calcTotals);
-}
 
-// ---------- checkout ----------
-async function startCheckout() {
-  clearError();
-  if (!UPLOAD_DATA || !UPLOAD_DATA.job_id) { showError("Please upload a video first."); return; }
-  if (!agreeCb || !agreeCb.checked)         { showError("Please accept the Terms & Conditions."); return; }
+/* ---------- Post-payment progress (SSE) ---------- */
+function sseProgressIfNeeded() {
+  const url = new URL(window.location.href);
+  const paid = url.searchParams.get("paid");
+  const jobId = url.searchParams.get("job_id");
+  if (!paid || !jobId) return;
 
-  setProgress(8, "Redirecting to payment…");
-  try {
-    const fd = new FormData();
-    fd.append("job_id", UPLOAD_DATA.job_id);
-    fd.append("provider", SELECTED_PROVIDER);
-    fd.append("priority", String(!!(priorityCb && priorityCb.checked)));
-    fd.append("transcript", String(!!(transcriptCb && transcriptCb.checked)));
-    if (emailInput && emailInput.value) fd.append("email", emailInput.value.trim());
+  const bar = byId("progressBar");      // optional – if you added one
+  const row = byId("progressRow");      // wrapper row, optional
+  const dl  = byId("downloadSection");  // existing download section
+  const link= byId("downloadLink");
 
-    const r = await fetch("/checkout", { method: "POST", body: fd });
-    if (!r.ok) throw new Error(`Checkout failed (${r.status})`);
-    const data = await r.json();
-    window.location.href = data.checkout_url; // full redirect
-  } catch (err) {
-    console.error(err);
-    showError("Could not start payment.");
-    resetProgress();
-  }
-}
-function setupCheckout() {
-  if (processBtn) processBtn.addEventListener("click", (e) => { e.preventDefault(); startCheckout(); });
-}
+  row && (row.style.display = "block");
 
-// ---------- progress (SSE) ----------
-function qp(name) { return new URL(window.location.href).searchParams.get(name); }
-
-function beginSSE(jobId) {
-  if (!jobId) return;
-  setProgress(2, "Working…");
-  const es = new EventSource(`/events/${jobId}`);
-  es.onmessage = (evt) => {
+  const ev = new EventSource(`/events/${jobId}`);
+  ev.onmessage = (m) => {
     try {
-      const msg = JSON.parse(evt.data || "{}");
-      if (msg.status === "queued" || msg.status === "processing") setProgress(10, "Processing…");
-      else if (msg.status === "compressing") setProgress(60, "Compressing…");
-      else if (msg.status === "finalizing") setProgress(85, "Finalizing…");
-      else if (msg.status === "done") {
-        setProgress(100, "Done");
-        if (downloadSection && downloadLink && msg.download_url) {
-          downloadLink.href = msg.download_url;
-          downloadSection.style.display = "block";
-        }
-        es.close();
-      } else if (msg.status === "error") {
-        showError("An error occurred during processing.");
-        resetProgress();
-        es.close();
+      const data = JSON.parse(m.data);
+      // Status only stream; we fake percentage: queued(2%), processing(20%), compressing(60%), finalizing(90%), done(100%)
+      const map = { queued:2, processing:20, compressing:60, finalizing:90, done:100, error:0 };
+      const pct = map[data.status] ?? 0;
+      if (bar) bar.style.width = `${pct}%`;
+
+      if (data.status === "done" && data.download_url) {
+        ev.close();
+        if (dl) dl.style.display = "block";
+        if (link) link.href = data.download_url;
       }
-    } catch {}
+      if (data.status === "error") {
+        ev.close();
+        showError("An error occurred during processing.");
+      }
+    } catch (_) {}
   };
-  es.onerror = () => setProgress(3, "Reconnecting…");
 }
 
-// ---------- init ----------
-function init() {
-  setupUpload();
-  setupProviderCards();
-  setupExtras();
-  setupCheckout();
+/* ---------- Boot ---------- */
+document.addEventListener("DOMContentLoaded", () => {
+  // Only wire once the DOM is ready
+  wireProviders();
+  wireUpsells();
+  wireUpload();
+  wirePay();
+
+  // First, try to calc – if nodes are missing this safely no-ops.
   calcTotals();
 
-  const paid = qp("paid"), jobId = qp("job_id");
-  if (paid === "1" && jobId) beginSSE(jobId);
-}
-(document.readyState === "loading") ? document.addEventListener("DOMContentLoaded", init) : init();
+  // If we returned from Stripe with ?paid=1, begin SSE progress
+  sseProgressIfNeeded();
+});
