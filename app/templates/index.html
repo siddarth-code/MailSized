@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta http-equiv="Cache-Control" content="no-store" />
   <title>MailSized – Send Large Videos via Email</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <link rel="stylesheet" href="/static/style.css" />
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+
   {{ adsense_tag|safe }}
 </head>
 <body>
@@ -25,6 +27,7 @@
 
     <div class="card-container">
       <div class="main-card">
+        <!-- Steps -->
         <div class="progress-bar">
           <div id="step1" class="progress-step active">1. Upload</div>
           <div id="step2" class="progress-step">2. Payment</div>
@@ -32,79 +35,85 @@
           <div id="step4" class="progress-step">4. Download</div>
         </div>
 
+        <!-- Content -->
         <div class="step-content">
           <h2 class="step-title"><i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video</h2>
 
+          <!-- Upload area -->
           <div class="upload-area" id="uploadArea">
             <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
             <h3>Click to browse or drag &amp; drop your video</h3>
             <p>Max file size: 2GB</p>
             <p>Supported formats: MP4, MOV, AVI, MKV</p>
-            <input type="file" id="fileInput" accept="video/*" style="display:none;" />
+            <input type="file" id="fileInput" accept="video/*" style="display:none;">
           </div>
 
+          <!-- Selected file details -->
           <div class="file-info" id="fileInfo" style="display:none;">
             <div class="file-icon"><i class="fas fa-file-video"></i></div>
             <div class="file-details">
               <div class="file-name" id="fileName"></div>
               <div class="file-meta">
-                <span id="fileSize"></span>
-                <span id="fileDuration"></span>
+                <span id="fileSize"></span><span id="fileDuration"></span>
               </div>
             </div>
             <button class="remove-file" id="removeFile"><i class="fas fa-times"></i></button>
           </div>
 
           <h2 class="step-title"><i class="fas fa-envelope"></i> 2. Select Email Provider</h2>
-          <div class="providers" id="providers">
-            <div class="provider-card gmail selected" data-provider="gmail">
+          <div class="providers" id="providerList">
+            <button class="provider-card gmail selected" data-provider="gmail" type="button">
               <div class="provider-icon"><i class="fab fa-google"></i></div>
               <div class="provider-name">Gmail</div>
               <div class="provider-details">
                 <div>Max attachment: 25MB</div>
                 <div class="provider-price">$1.99 – $4.99</div>
               </div>
-            </div>
-            <div class="provider-card outlook" data-provider="outlook">
+            </button>
+
+            <button class="provider-card outlook" data-provider="outlook" type="button">
               <div class="provider-icon"><i class="fab fa-microsoft"></i></div>
               <div class="provider-name">Outlook</div>
               <div class="provider-details">
                 <div>Max attachment: 20MB</div>
                 <div class="provider-price">$2.19 – $4.99</div>
               </div>
-            </div>
-            <div class="provider-card other" data-provider="other">
+            </button>
+
+            <button class="provider-card other" data-provider="other" type="button">
               <div class="provider-icon"><i class="fas fa-envelope"></i></div>
               <div class="provider-name">Other</div>
               <div class="provider-details">
                 <div>Max attachment: 15MB</div>
                 <div class="provider-price">$2.49 – $5.49</div>
               </div>
-            </div>
+            </button>
           </div>
 
           <h2 class="step-title"><i class="fas fa-star"></i> 3. Add Extras</h2>
           <div class="extras">
-            <div class="extra-option">
-              <input type="checkbox" id="priority" />
-              <label class="extra-label" for="priority">Priority Processing</label>
-              <div class="extra-price">+ $0.75</div>
-            </div>
-            <div class="extra-option">
-              <input type="checkbox" id="transcript" />
-              <label class="extra-label" for="transcript">Video Transcript</label>
-              <div class="extra-price">+ $1.50</div>
-            </div>
+            <label class="extra-option">
+              <input type="checkbox" id="priority">
+              <span class="extra-label">Priority Processing</span>
+              <span class="extra-price">+ $0.75</span>
+            </label>
+            <label class="extra-option">
+              <input type="checkbox" id="transcript">
+              <span class="extra-label">Video Transcript</span>
+              <span class="extra-price">+ $1.50</span>
+            </label>
           </div>
 
           <div class="email-input">
             <label for="userEmail">Your email (optional):</label>
-            <input type="email" id="userEmail" placeholder="you@example.com" />
+            <input type="email" id="userEmail" placeholder="you@example.com">
           </div>
 
           <div class="payment-agreement">
-            <input type="checkbox" id="agree" />
-            <label for="agree">I agree to the <a href="/terms" class="terms-link">Terms &amp; Conditions</a> (service is non‑refundable)</label>
+            <label>
+              <input type="checkbox" id="agree">
+              I agree to the <a href="/terms" class="terms-link" target="_blank" rel="noopener">Terms &amp; Conditions</a> (service is non‑refundable)
+            </label>
           </div>
 
           <div class="error-container" id="errorContainer" style="display:none;">
@@ -114,29 +123,34 @@
             <div id="errorMessage"></div>
           </div>
 
-          <button class="action-button" id="processButton">
+          <button class="action-button" id="processButton" type="button">
             <i class="fas fa-credit-card"></i> Pay &amp; Compress
           </button>
 
-          <!-- Live progress after payment -->
-          <div id="progressContainer" style="display:none;margin-top:14px;">
-            <div class="progress-title"><i class="fas fa-spinner fa-spin"></i> Compression in progress…</div>
-            <div class="progress-outer">
-              <div id="progressBar" class="progress-inner" style="width:2%;"></div>
+          <!-- Download + progress -->
+          <div id="postPaySection" style="display:none;margin-top:16px;">
+            <div class="progress-wrapper">
+              <div class="progress-header">
+                <span>Compression in progress…</span>
+                <span id="progressPct">0%</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" id="progressFill" style="width:0%;"></div>
+              </div>
+              <div class="progress-note" id="progressNote">Working…</div>
             </div>
-            <div id="progressText" class="progress-text">2% — Working…</div>
-          </div>
 
-          <!-- Download -->
-          <div id="downloadSection" style="display:none;margin-top:20px;">
-            <a id="downloadLink" class="action-button" href="#" download>
-              <i class="fas fa-download"></i> Download Compressed Video
-            </a>
-            <p style="margin-top:8px;font-size:0.9rem;color:#4a5568;">We’ve also emailed your file.</p>
+            <div id="downloadSection" style="display:none;margin-top:14px;">
+              <a id="downloadLink" class="action-button" href="#" download>
+                <i class="fas fa-download"></i> Download Compressed Video
+              </a>
+              <p style="margin-top:8px;font-size:0.9rem;color:#4a5568;">We’ve also emailed your file.</p>
+            </div>
           </div>
         </div>
       </div>
 
+      <!-- Right card: Pricing -->
       <div class="info-card">
         <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
         <table class="pricing-table">
@@ -150,6 +164,7 @@
           </tbody>
         </table>
 
+        <!-- These IDs are required by JS (keep them) -->
         <div class="price-summary">
           <div class="price-item"><span>Base compression:</span><span id="basePrice">$0.00</span></div>
           <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
@@ -168,22 +183,19 @@
     </div>
   </div>
 
-  <script src="/static/script.js?v=2025-08-13-1"></script>
+  <script defer src="/static/script.js?v=2025-08-13-1"></script>
   <script>
     if (window.adsbygoogle) {
-      const slots = [{id:'ad-slot-sidebar',slot:'sidebar-300x250'},{id:'ad-slot-inline',slot:'inline-320x100'}];
-      slots.forEach(s => {
-        const el = document.getElementById(s.id);
-        if (!el) return;
-        const ins = document.createElement('ins');
-        ins.className = 'adsbygoogle';
-        ins.style.display = 'block';
-        ins.setAttribute('data-ad-client', '{{ adsense_client_id }}');
-        ins.setAttribute('data-ad-slot', s.slot);
-        ins.setAttribute('data-full-width-responsive', 'true');
-        el.innerHTML = '';
-        el.appendChild(ins);
-        (adsbygoogle = window.adsbygoogle || []).push({});
+      const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'},{id:'ad-slot-inline',slot:'inline-320x100'}];
+      slots.forEach(s=>{
+        const el=document.getElementById(s.id); if(!el) return;
+        const ins=document.createElement('ins');
+        ins.className='adsbygoogle'; ins.style.display='block';
+        ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot',s.slot);
+        ins.setAttribute('data-full-width-responsive','true');
+        el.innerHTML=''; el.appendChild(ins);
+        (adsbygoogle=window.adsbygoogle||[]).push({});
       });
     }
   </script>
