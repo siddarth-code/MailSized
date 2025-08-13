@@ -1,12 +1,15 @@
 """
-ASGI entry point for the MailSized service.
+MailSized — FastAPI app (app/main.py)
 
-Implements upload → Stripe pay → compression → download with:
-- Tiered pricing (≤5/≤10/≤20 min) and size caps (≤500MB / ≤1GB / ≤2GB)
-- Provider-specific base prices (Gmail/Outlook/Other)
-- SSE progress stream
-- Mailgun/SMTP notification
-- Robust ffmpeg 2-pass ABR compression targeting provider attachment limits
+Workflow:
+1) POST /upload -> save file, probe duration, decide tier, return job_id + tier + base gmail price
+2) POST /checkout -> create Stripe Checkout for provider/tier (DO NOT start job)
+3) Stripe -> /stripe/webhook (checkout.session.completed) -> start job
+4) GET /events/{job_id} -> SSE for stepper
+5) GET /download/{job_id} -> serve compressed file
+
+Caps (your request): ≤500MB / ≤1GB / ≤2GB
+Provider targets: Gmail=25MB, Outlook=20MB, Other=15MB
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import shutil
 import subprocess
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 import stripe
@@ -43,6 +46,15 @@ else:
     TEMP_UPLOAD_DIR = os.path.join(BASE_DIR, "temp_uploads")
 os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 
+# Cleanup orphaned temp files on startup to protect disk quota
+try:
+    for name in os.listdir(TEMP_UPLOAD_DIR):
+        p = os.path.join(TEMP_UPLOAD_DIR, name)
+        if os.path.isfile(p):
+            os.remove(p)
+except Exception as _e:
+    logger.warning("Startup cleanup warning: %s", _e)
+
 # Global limits
 MAX_SIZE_GB = 2
 MAX_DURATION_SEC = 20 * 60
@@ -58,35 +70,9 @@ PROVIDER_PRICING = {
     "other": [2.49, 3.99, 5.49],
 }
 
-
-def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
-    """
-    Decide tier based on duration and size.
-    Caps: ≤500MB / ≤1GB / ≤2GB
-    Returns dict with tier (1-3), a base price (Gmail tier price), and max caps.
-    """
-    minutes = duration_sec / 60
-    mb_size = file_size_bytes / (1024 * 1024)
-
-    if minutes <= 5 and mb_size <= 500:
-        tier, price, max_len, max_mb = 1, 1.99, 5, 500
-    elif minutes <= 10 and mb_size <= 1024:
-        tier, price, max_len, max_mb = 2, 2.99, 10, 1024
-    elif minutes <= 20 and mb_size <= 2048:
-        tier, price, max_len, max_mb = 3, 4.99, 20, 2048
-    else:
-        raise ValueError("Video exceeds allowed limits for all tiers.")
-
-    return {
-        "tier": tier,
-        "price": round(price, 2),  # Gmail base for the tier (client swaps provider on UI)
-        "max_length_min": max_len,
-        "max_size_mb": max_mb,
-    }
-
+# ---------- Ads (optional) ----------
 
 def adsense_script_tag() -> str:
-    """Return AdSense script tag when enabled & consented."""
     enabled = os.getenv("ENABLE_ADSENSE", "false").lower() == "true"
     consent = os.getenv("CONSENT_GIVEN", "false").lower() == "true"
     client = os.getenv("ADSENSE_CLIENT_ID", "").strip()
@@ -96,7 +82,6 @@ def adsense_script_tag() -> str:
         f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" '
         'crossorigin="anonymous"></script>'
     )
-
 
 # ---------- Job Model ----------
 
@@ -117,19 +102,19 @@ class Job:
         self.size_bytes = size_bytes
         self.pricing = pricing
 
-        self.provider: Optional[str] = None
+        self.provider: str | None = None
         self.priority: bool = False
         self.transcript: bool = False
-        self.email: Optional[str] = None
-        self.target_size_mb: Optional[int] = None
+        self.email: str | None = None
+        self.target_size_mb: int | None = None
 
         self.status: str = JobStatus.QUEUED
-        self.output_path: Optional[str] = None
+        self.output_path: str | None = None
         self.created_at = datetime.utcnow()
-        self.download_expiry: Optional[datetime] = None
+        self.download_expiry: datetime | None = None
 
     @property
-    def download_url(self) -> Optional[str]:
+    def download_url(self) -> str | None:
         if self.status != JobStatus.DONE or not self.output_path:
             return None
         return f"/download/{self.job_id}"
@@ -138,8 +123,7 @@ class Job:
 # In-memory registry
 jobs: Dict[str, Job] = {}
 
-# ---------- Helpers ----------
-
+# ---------- Helpers: probing & compression ----------
 
 async def probe_duration(file_path: str) -> float:
     """Return duration (seconds) using ffprobe; 0.0 on failure."""
@@ -147,12 +131,9 @@ async def probe_duration(file_path: str) -> float:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
                 file_path,
             ],
             capture_output=True,
@@ -165,22 +146,10 @@ async def probe_duration(file_path: str) -> float:
         return 0.0
 
 
-def _has_ffmpeg() -> bool:
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except Exception:
-        return False
-
-
-# ---------- Replace compress_video with a real implementation ----------
-
 def _calc_target_bitrate_kbps(target_size_mb: int, duration_sec: float) -> tuple[int, int]:
     """
-    Compute a video+audio bitrate (Kbps) to hit a target file size.
-
-    We reserve ~5% container overhead and 96–128 Kbps for audio (AAC).
+    Compute video+audio bitrate to hit a provider cap.
+    Reserve ~5% container overhead; AAC audio 96–128 kbps depending on length.
     Returns (video_kbps, audio_kbps).
     """
     duration_sec = max(1.0, float(duration_sec))
@@ -188,32 +157,28 @@ def _calc_target_bitrate_kbps(target_size_mb: int, duration_sec: float) -> tuple
     container_overhead = int(target_bits * 0.05)
     usable_bits = max(1, target_bits - container_overhead)
 
-    # audio bitrate
-    audio_kbps = 128 if duration_sec >= 300 else 96  # 5+ min → 128, else 96
+    audio_kbps = 128 if duration_sec >= 300 else 96
     audio_bits = int(audio_kbps * 1000 * duration_sec)
 
     video_bits = max(1, usable_bits - audio_bits)
-    video_kbps = max(150, int(video_bits / duration_sec / 1000))  # floor at 150 Kbps
+    video_kbps = max(150, int(video_bits / duration_sec / 1000))
+    video_kbps = min(video_kbps, 4000)  # sanity cap
 
-    # cap extremely high bitrates (we're emailing tiny files)
-    video_kbps = min(video_kbps, 4000)
     return video_kbps, audio_kbps
 
 
 async def _run_ffmpeg_2pass(src: str, dst: str, video_kbps: int, audio_kbps: int) -> None:
-    """
-    Run a classic two‑pass ABR encode with libx264 + AAC.
-    """
+    """Two-pass ABR with libx264 + AAC."""
     log_path = os.path.join(TEMP_UPLOAD_DIR, f"ffmpeg2pass_{uuid.uuid4().hex}")
     pass1 = [
         "ffmpeg", "-y",
         "-i", src,
         "-c:v", "libx264", "-b:v", f"{video_kbps}k",
         "-pass", "1", "-passlogfile", log_path,
-        "-an",               # no audio in pass 1
+        "-an",
         "-preset", "veryfast",
         "-movflags", "+faststart",
-        "-f", "mp4", "/dev/null"
+        "-f", "mp4", "/dev/null",
     ]
     pass2 = [
         "ffmpeg", "-y",
@@ -223,13 +188,12 @@ async def _run_ffmpeg_2pass(src: str, dst: str, video_kbps: int, audio_kbps: int
         "-c:a", "aac", "-b:a", f"{audio_kbps}k",
         "-preset", "veryfast",
         "-movflags", "+faststart",
-        dst
+        dst,
     ]
     try:
         subprocess.run(pass1, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         subprocess.run(pass2, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     finally:
-        # clean 2-pass logs
         for ext in (".log", ".log.mbtree"):
             p = f"{log_path}{ext}"
             if os.path.exists(p):
@@ -238,41 +202,37 @@ async def _run_ffmpeg_2pass(src: str, dst: str, video_kbps: int, audio_kbps: int
                 except Exception:
                     pass
 
+
 async def compress_video(file_path: str, output_path: str, target_size_mb: int) -> None:
     """
-    Compress to meet an email provider's cap using:
-      1) Two‑pass ABR targeting the provider cap
-      2) If slightly over, try again at 90% then 80% of the original bitrate
-      3) If still over (very noisy footage), fall back to CRF ladder (CRF 28→30→32)
+    Compress to meet the provider cap using:
+      1) Two‑pass ABR at computed bitrate
+      2) If over, retry at 90%, then 80%
+      3) If still over, CRF ladder 28 -> 30 -> 32
     """
-    # 1) initial ABR bitrate
     duration_sec = await probe_duration(file_path)
     if duration_sec <= 0:
-        # duration unknown → try a conservative CRF to ensure shrink
+        # Fallback when duration fails
         crf_cmd = [
             "ffmpeg", "-y", "-i", file_path,
             "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
             "-c:a", "aac", "-b:a", "96k",
             "-movflags", "+faststart",
-            output_path
+            output_path,
         ]
         subprocess.run(crf_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return
 
     v_kbps, a_kbps = _calc_target_bitrate_kbps(target_size_mb, duration_sec)
-
-    # Try ABR at 100%, then 90%, then 80% of computed bitrate
     for scale in (1.00, 0.90, 0.80):
         try:
             await _run_ffmpeg_2pass(file_path, output_path, int(v_kbps * scale), a_kbps)
-            final_bytes = os.path.getsize(output_path)
-            final_mb = final_bytes / (1024 * 1024)
-            if final_mb <= (target_size_mb * 1.03):  # small headroom OK
+            final_mb = os.path.getsize(output_path) / (1024 * 1024)
+            if final_mb <= (target_size_mb * 1.03):
                 return
         except subprocess.CalledProcessError as e:
             logger.warning("ffmpeg ABR encode failed at scale %.2f: %s", scale, e)
 
-    # Fall back to CRF ladder if ABR couldn't consistently hit cap
     for crf in (28, 30, 32):
         try:
             crf_cmd = [
@@ -280,24 +240,47 @@ async def compress_video(file_path: str, output_path: str, target_size_mb: int) 
                 "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast",
                 "-c:a", "aac", "-b:a", f"{a_kbps}k",
                 "-movflags", "+faststart",
-                output_path
+                output_path,
             ]
             subprocess.run(crf_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            final_bytes = os.path.getsize(output_path)
-            final_mb = final_bytes / (1024 * 1024)
+            final_mb = os.path.getsize(output_path) / (1024 * 1024)
             if final_mb <= (target_size_mb * 1.03):
                 return
         except subprocess.CalledProcessError as e:
             logger.warning("ffmpeg CRF=%s encode failed: %s", crf, e)
 
-    # If everything failed, keep the best attempt (smallest file)
-    try:
-        # nothing else to do; output_path should contain last attempt
-        pass
-    except Exception:
-        shutil.copy(file_path, output_path)  # last‑ditch copy (won't meet cap)
+    # last attempt already sits in output_path; if it failed, copy as last resort
+    if not os.path.exists(output_path):
+        shutil.copy(file_path, output_path)
 
+# ---------- Pricing ----------
 
+def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
+    """
+    Decide tier based on duration and size.
+    Caps: ≤500MB / ≤1GB / ≤2GB
+    Returns dict with tier (1-3), a base price (gmail tier price), and max caps.
+    """
+    minutes = duration_sec / 60
+    mb_size = file_size_bytes / (1024 * 1024)
+
+    if minutes <= 5 and mb_size <= 500:
+        tier, price, max_len, max_mb = 1, 1.99, 5, 500
+    elif minutes <= 10 and mb_size <= 1024:
+        tier, price, max_len, max_mb = 2, 2.99, 10, 1024
+    elif minutes <= 20 and mb_size <= 2048:
+        tier, price, max_len, max_mb = 3, 4.99, 20, 2048
+    else:
+        raise ValueError("Video exceeds allowed limits for all tiers.")
+
+    return {
+        "tier": tier,
+        "price": round(price, 2),  # base Gmail price for the tier
+        "max_length_min": max_len,
+        "max_size_mb": max_mb,
+    }
+
+# ---------- Email ----------
 
 async def send_email(recipient: str, download_url: str) -> None:
     """Send email via Mailgun if configured; fall back to SMTP."""
@@ -363,6 +346,7 @@ async def send_email(recipient: str, download_url: str) -> None:
     except Exception as exc:
         logger.warning("SMTP send failed: %s", exc)
 
+# ---------- Job runner & cleanup ----------
 
 async def run_job(job: Job) -> None:
     try:
@@ -407,7 +391,6 @@ async def cleanup_job(job_id: str) -> None:
     jobs.pop(job_id, None)
     logger.info("Cleaned up job %s", job_id)
 
-
 # ---------- FastAPI App ----------
 
 app = FastAPI()
@@ -422,7 +405,6 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -430,15 +412,14 @@ async def index(request: Request) -> HTMLResponse:
         {"request": request, "adsense_tag": adsense_script_tag(), "adsense_client_id": os.getenv("ADSENSE_CLIENT_ID", "")},
     )
 
-
 @app.get("/terms", response_class=HTMLResponse)
 async def terms(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("terms.html", {"request": request})
 
+# ---------- Upload ----------
 
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
-    # validate extension
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type: {ext}")
@@ -479,12 +460,13 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
             "duration_sec": duration_sec,
             "size_bytes": total_bytes,
             "tier": pricing["tier"],
-            "price": pricing["price"],  # base price for Gmail tier (UI replaces by provider)
+            "price": pricing["price"],  # gmail base; UI swaps provider price
             "max_length_min": pricing["max_length_min"],
             "max_size_mb": pricing["max_size_mb"],
         }
     )
 
+# ---------- Checkout (Stripe redirect) ----------
 
 @app.post("/checkout")
 async def checkout(
@@ -550,9 +532,10 @@ async def checkout(
         metadata=metadata,
     )
 
-    # Do NOT start the job here; the webhook will.
+    # NOTE: Do NOT start the job here; webhook will.
     return JSONResponse({"checkout_url": session.url, "session_id": session.id})
 
+# ---------- Stripe webhook ----------
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
@@ -577,10 +560,9 @@ async def stripe_webhook(request: Request):
         job = jobs.get(job_id)
 
         if job:
-            # restore selections
             job.provider = meta.get("provider") or job.provider
-            job.priority = (meta.get("priority") in ("True", "true", "1"))
-            job.transcript = (meta.get("transcript") in ("True", "true", "1"))
+            job.priority = (meta.get("priority") in ("True", "true"))
+            job.transcript = (meta.get("transcript") in ("True", "true"))
             email = (meta.get("email") or "").strip()
             job.email = email or job.email
             try:
@@ -597,6 +579,7 @@ async def stripe_webhook(request: Request):
 
     return {"received": True}
 
+# ---------- SSE events ----------
 
 @app.get("/events/{job_id}")
 async def job_events(job_id: str):
@@ -621,6 +604,7 @@ async def job_events(job_id: str):
 
     return StreamingResponse(event_generator(job_id), media_type="text/event-stream")
 
+# ---------- Download ----------
 
 @app.get("/download/{job_id}")
 async def download(job_id: str):
@@ -637,11 +621,11 @@ async def download(job_id: str):
     filename = f"compressed_video_{job.job_id}.mp4"
     return FileResponse(job.output_path, filename=filename, media_type="video/mp4")
 
+# ---------- Health ----------
 
 @app.get("/healthz")
 async def health() -> Dict[str, str]:
     return {"status": "ok"}
-
 
 if __name__ == "__main__":  # pragma: no cover
     import uvicorn
