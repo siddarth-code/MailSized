@@ -1,12 +1,23 @@
 """
-MailSized – FastAPI app (upload → Stripe pay → compress → download) with
-provider pricing + async ffmpeg sized to email attachment targets.
+MailSized – upload → Stripe → async 2-pass ffmpeg (size-targeted) → download
+Adds live progress via SSE and robust email sending.
 
-Key fixes vs prior:
-- Async, non-blocking ffmpeg pipeline (no event loop stall → fewer 502s)
-- Real size targeting using 2-pass ABR (x264) based on provider MB cap
-- Constrained resource usage (threads=1) for Render Hobby
-- HEAD / health handling and clearer logging
+Env you should set:
+  PUBLIC_BASE_URL=https://mailsized.com
+  STRIPE_SECRET_KEY=...
+  STRIPE_WEBHOOK_SECRET=...
+  # Optional email (choose ONE path)
+  # ---- Mailgun ----
+  MAILGUN_API_KEY=...
+  MAILGUN_DOMAIN=yourverifieddomain.com
+  SENDER_EMAIL=no-reply@yourverifieddomain.com
+  # ---- SMTP (fallback) ----
+  EMAIL_SMTP_HOST=smtp.gmail.com
+  EMAIL_SMTP_PORT=587         # 587 (STARTTLS) or 465 (SSL)
+  EMAIL_SMTP_USE_SSL=false    # "true" if 465, else "false"
+  EMAIL_SMTP_USE_TLS=true     # "true" if 587, else "false"
+  EMAIL_USERNAME=...
+  EMAIL_PASSWORD=...
 """
 
 from __future__ import annotations
@@ -16,7 +27,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -34,7 +44,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# -------------------- Config --------------------
+# ---------- Config ----------
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("mailsized")
@@ -42,8 +52,6 @@ log = logging.getLogger("mailsized")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 BASE_DIR = os.path.dirname(__file__)
-
-# Filesystem paths (Render-safe)
 TEMP_UPLOAD_DIR = (
     "/opt/render/project/src/temp_uploads"
     if "RENDER" in os.environ
@@ -51,19 +59,16 @@ TEMP_UPLOAD_DIR = (
 )
 os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 
-# ffmpeg binaries we downloaded to ./bin via build.sh
+# ffmpeg (installed by build.sh into /opt/render/project/src/bin)
 FFMPEG = os.getenv("FFMPEG_PATH", "/opt/render/project/src/bin/ffmpeg")
 FFPROBE = os.getenv("FFPROBE_PATH", "/opt/render/project/src/bin/ffprobe")
 
-# Limits / pricing
+# Limits & pricing
 MAX_SIZE_GB = 2
 MAX_DURATION_SEC = 20 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 
-# Provider attachment targets (MB) — our compression goal
 PROVIDER_TARGETS_MB = {"gmail": 25, "outlook": 20, "other": 15}
-
-# Provider base pricing by tier (≤5, ≤10, ≤20 min)
 PROVIDER_PRICING = {
     "gmail":   [1.99, 2.99, 4.49],
     "outlook": [2.19, 3.29, 4.99],
@@ -72,7 +77,6 @@ PROVIDER_PRICING = {
 
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
-# -------------------- Helpers --------------------
 
 def adsense_script_tag() -> str:
     enabled = os.getenv("ENABLE_ADSENSE", "false").lower() == "true"
@@ -85,126 +89,19 @@ def adsense_script_tag() -> str:
 
 
 def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
-    """Pick tier based on duration and file size caps (≤500MB/≤1GB/≤2GB)."""
+    # Size caps for tiers: ≤500MB / ≤1GB / ≤2GB
     minutes = duration_sec / 60
     mb_size = file_size_bytes / (1024 * 1024)
-
     if minutes <= 5 and mb_size <= 500:
-        tier, price, max_len, max_mb = 1, 1.99, 5, 500
-    elif minutes <= 10 and mb_size <= 1024:
-        tier, price, max_len, max_mb = 2, 2.99, 10, 1024
-    elif minutes <= 20 and mb_size <= 2048:
-        tier, price, max_len, max_mb = 3, 4.99, 20, 2048
-    else:
-        raise ValueError("Video exceeds allowed limits for all tiers.")
-
-    return {
-        "tier": tier,
-        "price": round(price, 2),  # Gmail base for that tier; provider swaps on UI
-        "max_length_min": max_len,
-        "max_size_mb": max_mb,
-    }
+        return {"tier": 1, "price": 1.99, "max_length_min": 5, "max_size_mb": 500}
+    if minutes <= 10 and mb_size <= 1024:
+        return {"tier": 2, "price": 2.99, "max_length_min": 10, "max_size_mb": 1024}
+    if minutes <= 20 and mb_size <= 2048:
+        return {"tier": 3, "price": 4.99, "max_length_min": 20, "max_size_mb": 2048}
+    raise ValueError("Video exceeds allowed limits for all tiers.")
 
 
-async def probe_duration(file_path: str) -> float:
-    """Return duration (seconds) using ffprobe; 0.0 on failure."""
-    try:
-        p = await asyncio.create_subprocess_exec(
-            FFPROBE,
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            file_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, _ = await p.communicate()
-        return float((out or b"0").decode().strip() or "0")
-    except Exception as exc:
-        log.warning("ffprobe failed: %s", exc)
-        return 0.0
-
-
-def compute_bitrates_for_target(duration_sec: float, target_mb: int) -> tuple[int, int]:
-    """
-    Compute (video_kbps, audio_kbps) for a **target total size**.
-
-    We budget a fixed audio bitrate and muxing overhead, then assign the rest to video.
-    """
-    # Total target bits
-    total_bits = target_mb * 1024 * 1024 * 8
-    # Conservative audio budget (mono/low stereo) to save headroom
-    audio_kbps = 80  # tweakable
-    overhead = 0.05  # 5% container overhead
-    # Bits available for video after audio+overhead
-    duration = max(1.0, float(duration_sec))
-    video_bits_available = total_bits * (1.0 - overhead) - (audio_kbps * 1000 * duration)
-    video_kbps = max(150, int(video_bits_available / 1000 / duration))
-    # Guardrails
-    video_kbps = min(video_kbps, 2500)  # cap for short clips
-    return video_kbps, audio_kbps
-
-
-async def ffmpeg_two_pass(
-    src: str, dst: str, duration_sec: float, target_mb: int
-) -> None:
-    """
-    2-pass ABR to hit a size close to provider's cap.
-    Constrain threads to reduce memory spikes on Hobby.
-    """
-    v_kbps, a_kbps = compute_bitrates_for_target(duration_sec, target_mb)
-    log.info("2-pass target ~%d MB: v=%dkbps a=%dkbps", target_mb, v_kbps, a_kbps)
-
-    passlog = os.path.join(TEMP_UPLOAD_DIR, f"ffpass_{uuid.uuid4().hex}")
-    common = [
-        "-y", "-hide_banner", "-loglevel", "error",
-        "-threads", "1",
-        "-i", src,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-movflags", "+faststart",
-    ]
-
-    # pass 1 (no audio, null mux)
-    p1 = await asyncio.create_subprocess_exec(
-        FFMPEG, *common,
-        "-b:v", f"{v_kbps}k",
-        "-pass", "1",
-        "-passlogfile", passlog,
-        "-an",
-        "-f", "mp4",
-        os.devnull,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, err1 = await p1.communicate()
-    if p1.returncode != 0:
-        raise RuntimeError(f"ffmpeg pass1 failed: {err1.decode()}")
-
-    # pass 2 (with audio)
-    p2 = await asyncio.create_subprocess_exec(
-        FFMPEG, *common,
-        "-b:v", f"{v_kbps}k",
-        "-pass", "2",
-        "-passlogfile", passlog,
-        "-c:a", "aac",
-        "-b:a", f"{a_kbps}k",
-        dst,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, err2 = await p2.communicate()
-    # Clean pass logs
-    for ext in (".log", ".mbtree"):
-        try:
-            os.remove(passlog + ext)
-        except FileNotFoundError:
-            pass
-    if p2.returncode != 0:
-        raise RuntimeError(f"ffmpeg pass2 failed: {err2.decode()}")
-
-
-# -------------------- Job model --------------------
+# ---------- Job model ----------
 
 class JobStatus:
     QUEUED = "queued"
@@ -228,6 +125,7 @@ class Job:
         self.email: Optional[str] = None
         self.target_size_mb: Optional[int] = None
         self.status: str = JobStatus.QUEUED
+        self.progress: float = 0.0  # 0..1
         self.output_path: Optional[str] = None
         self.created_at = datetime.utcnow()
         self.download_expiry: Optional[datetime] = None
@@ -241,17 +139,128 @@ class Job:
 
 jobs: Dict[str, Job] = {}
 
-# -------------------- Email --------------------
+# ---------- Helpers ----------
+
+async def probe_duration(path: str) -> float:
+    try:
+        p = await asyncio.create_subprocess_exec(
+            FFPROBE, "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await p.communicate()
+        return float((out or b"0").decode().strip() or "0")
+    except Exception as exc:
+        log.warning("ffprobe failed: %s", exc)
+        return 0.0
+
+
+def compute_bitrates_for_target(duration_sec: float, target_mb: int) -> tuple[int, int]:
+    total_bits = target_mb * 1024 * 1024 * 8
+    audio_kbps = 80
+    overhead = 0.05
+    duration = max(1.0, float(duration_sec))
+    video_bits = total_bits * (1.0 - overhead) - (audio_kbps * 1000 * duration)
+    v_kbps = max(150, int(video_bits / 1000 / duration))
+    v_kbps = min(v_kbps, 2500)
+    return v_kbps, audio_kbps
+
+
+async def _run_ffmpeg_pass(
+    args: list[str],
+    duration_sec: float,
+    start_weight: float,
+    end_weight: float,
+    job: Job,
+) -> None:
+    """
+    Run a single ffmpeg pass and update job.progress using -progress pipe:2 output.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    # Parse progress lines from stderr: key=value, includes out_time_ms
+    while True:
+        line = await proc.stderr.readline()
+        if not line:
+            break
+        s = line.decode().strip()
+        if s.startswith("out_time_ms="):
+            try:
+                out_ms = int(s.split("=", 1)[1])
+                frac = min(1.0, max(0.0, out_ms / (duration_sec * 1000000.0)))
+                job.progress = start_weight + (end_weight - start_weight) * frac
+            except Exception:
+                pass
+
+    await proc.wait()
+    if proc.returncode != 0:
+        # collect any remaining output to help debugging
+        rem = await proc.stderr.read()
+        raise RuntimeError(f"ffmpeg failed (rc={proc.returncode}): {rem.decode()}")
+
+
+async def ffmpeg_two_pass(src: str, dst: str, duration_sec: float, target_mb: int, job: Job) -> None:
+    v_kbps, a_kbps = compute_bitrates_for_target(duration_sec, target_mb)
+    log.info("2-pass target ~%d MB: v=%dkbps a=%dkbps", target_mb, v_kbps, a_kbps)
+
+    passlog = os.path.join(TEMP_UPLOAD_DIR, f"ffpass_{uuid.uuid4().hex}")
+    common = [
+        FFMPEG,
+        "-hide_banner",
+        "-y",
+        "-threads", "1",
+        "-i", src,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-movflags", "+faststart",
+        "-progress", "pipe:2",   # progress to stderr
+        "-loglevel", "error",
+    ]
+
+    # Pass 1: no audio, null mux
+    args1 = common + [
+        "-b:v", f"{v_kbps}k",
+        "-pass", "1", "-passlogfile", passlog,
+        "-an", "-f", "mp4", os.devnull,
+    ]
+    await _run_ffmpeg_pass(args1, duration_sec, 0.00, 0.45, job)
+
+    # Pass 2: with audio
+    args2 = common + [
+        "-b:v", f"{v_kbps}k",
+        "-pass", "2", "-passlogfile", passlog,
+        "-c:a", "aac", "-b:a", f"{a_kbps}k",
+        dst,
+    ]
+    await _run_ffmpeg_pass(args2, duration_sec, 0.45, 0.95, job)
+
+    # Clean pass logs (ignore missing)
+    for ext in (".log", ".mbtree"):
+        try:
+            os.remove(passlog + ext)
+        except FileNotFoundError:
+            pass
+
+
+# ---------- Email ----------
 
 async def send_email(recipient: str, download_url: str) -> None:
     sender = os.getenv("SENDER_EMAIL", "no-reply@mailsized.com")
     subject = "Your compressed video is ready"
     body = f"Your video is ready for the next 30 minutes:\n{download_url}"
 
+    # Try Mailgun first
     mg_api_key = os.getenv("MAILGUN_API_KEY")
     mg_domain = os.getenv("MAILGUN_DOMAIN")
     if mg_api_key and mg_domain and recipient:
-        def _send_mailgun():
+        def _send_mg():
             r = requests.post(
                 f"https://api.mailgun.net/v3/{mg_domain}/messages",
                 auth=("api", mg_api_key),
@@ -267,20 +276,22 @@ async def send_email(recipient: str, download_url: str) -> None:
                 timeout=10,
             )
             r.raise_for_status()
-
         try:
-            await asyncio.to_thread(_send_mailgun)
-            log.info("Email sent to %s via Mailgun", recipient)
+            await asyncio.to_thread(_send_mg)
+            log.info("Email sent via Mailgun to %s", recipient)
             return
         except Exception as exc:
-            log.warning("Mailgun failed: %s", exc)
+            log.warning("Mailgun send failed: %s", exc)
 
+    # SMTP fallback
     host = os.getenv("EMAIL_SMTP_HOST")
-    port = os.getenv("EMAIL_SMTP_PORT")
+    port = int(os.getenv("EMAIL_SMTP_PORT", "0") or 0)
+    use_ssl = (os.getenv("EMAIL_SMTP_USE_SSL", "false").lower() == "true")
+    use_tls = (os.getenv("EMAIL_SMTP_USE_TLS", "false").lower() == "true")
     username = os.getenv("EMAIL_USERNAME")
     password = os.getenv("EMAIL_PASSWORD")
     if not (host and port and username and password and recipient):
-        log.info("Email skipped: no Mailgun or SMTP credentials")
+        log.info("Email skipped: SMTP not fully configured")
         return
 
     import smtplib
@@ -297,34 +308,44 @@ async def send_email(recipient: str, download_url: str) -> None:
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        with smtplib.SMTP(host, int(port)) as s:
-            s.starttls()
-            s.login(username, password)
-            s.send_message(msg)
-        log.info("Email sent to %s via SMTP", recipient)
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port) as s:
+                s.login(username, password)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port) as s:
+                if use_tls:
+                    s.starttls()
+                s.login(username, password)
+                s.send_message(msg)
+        log.info("Email sent via SMTP to %s (host=%s port=%s ssl=%s tls=%s)",
+                 recipient, host, port, use_ssl, use_tls)
     except Exception as exc:
-        log.warning("SMTP failed: %s", exc)
+        log.warning("SMTP send failed: %s", exc)
 
-# -------------------- Job runner --------------------
+
+# ---------- Job runner ----------
 
 async def run_job(job: Job) -> None:
     try:
         job.status = JobStatus.PROCESSING
-        await asyncio.sleep(0.5)
+        job.progress = 0.02
+        await asyncio.sleep(0.4)
 
         job.status = JobStatus.COMPRESSING
         out_name = f"compressed_{job.job_id}.mp4"
         job.output_path = os.path.join(TEMP_UPLOAD_DIR, out_name)
-
         target_mb = int(job.target_size_mb or PROVIDER_TARGETS_MB.get(job.provider or "gmail", 25))
-        await ffmpeg_two_pass(job.file_path, job.output_path, job.duration, target_mb)
+        await ffmpeg_two_pass(job.file_path, job.output_path, job.duration, target_mb, job)
 
         job.status = JobStatus.FINALIZING
+        job.progress = 0.98
         await asyncio.sleep(0.5)
 
         ttl = int(os.getenv("DOWNLOAD_TTL_MIN", "30"))
         job.download_expiry = datetime.utcnow() + timedelta(minutes=ttl)
         job.status = JobStatus.DONE
+        job.progress = 1.0
 
         if job.email:
             await send_email(job.email, job.download_url or "")
@@ -352,12 +373,13 @@ async def cleanup_job(job_id: str) -> None:
     jobs.pop(job_id, None)
     log.info("Cleaned up job %s", job_id)
 
-# -------------------- FastAPI app --------------------
+
+# ---------- FastAPI ----------
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # you can tighten to mailsized.com later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -373,7 +395,7 @@ async def index(request: Request) -> HTMLResponse:
         {"request": request, "adsense_tag": adsense_script_tag(), "adsense_client_id": os.getenv("ADSENSE_CLIENT_ID", "")},
     )
 
-# Render proxy sometimes sends HEAD /
+# Render health checks sometimes use HEAD /
 @app.head("/")
 async def head_root() -> JSONResponse:
     return JSONResponse({"ok": True})
@@ -390,7 +412,7 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
 
     job_id = str(uuid.uuid4())
     temp_path = os.path.join(TEMP_UPLOAD_DIR, f"upload_{job_id}{ext}")
-    total_bytes = 0
+    total = 0
     max_bytes = MAX_SIZE_GB * 1024 * 1024 * 1024
 
     with open(temp_path, "wb") as out:
@@ -399,8 +421,8 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
             if not chunk:
                 break
             out.write(chunk)
-            total_bytes += len(chunk)
-            if total_bytes > max_bytes:
+            total += len(chunk)
+            if total > max_bytes:
                 out.close()
                 os.remove(temp_path)
                 raise HTTPException(400, "File exceeds 2GB limit")
@@ -410,20 +432,15 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
         os.remove(temp_path)
         raise HTTPException(400, "Video exceeds 20 minute limit")
 
-    try:
-        pricing = calculate_pricing(int(duration), total_bytes)
-    except ValueError as exc:
-        os.remove(temp_path)
-        raise HTTPException(400, str(exc))
-
-    job = Job(job_id, temp_path, duration, total_bytes, pricing)
+    pricing = calculate_pricing(int(duration), total)
+    job = Job(job_id, temp_path, duration, total, pricing)
     jobs[job_id] = job
 
     return JSONResponse(
         {
             "job_id": job_id,
             "duration_sec": duration,
-            "size_bytes": total_bytes,
+            "size_bytes": total,
             "tier": pricing["tier"],
             "price": pricing["price"],
             "max_length_min": pricing["max_length_min"],
@@ -514,12 +531,11 @@ async def stripe_webhook(request: Request):
             job.transcript = (meta.get("transcript") or "").lower() == "true"
             email = (meta.get("email") or "").strip()
             job.email = email or job.email
-            try:
-                if meta.get("target_size_mb"):
+            if meta.get("target_size_mb"):
+                try:
                     job.target_size_mb = int(meta["target_size_mb"])
-            except Exception:
-                pass
-
+                except Exception:
+                    pass
             job.status = JobStatus.QUEUED
             asyncio.create_task(run_job(job))
             log.info("Started job %s after Stripe payment", job_id)
@@ -531,21 +547,26 @@ async def stripe_webhook(request: Request):
 @app.get("/events/{job_id}")
 async def job_events(job_id: str):
     async def gen(jid: str):
-        last = None
+        last_status = None
+        last_progress = -1
         while True:
             job = jobs.get(jid)
             if not job:
                 yield f"data: {json.dumps({'status': JobStatus.ERROR, 'message': 'Job not found'})}\n\n"
                 break
-            if job.status != last:
-                payload: Dict[str, Any] = {"status": job.status}
-                if job.status == JobStatus.DONE and job.download_url:
-                    payload["download_url"] = job.download_url
+            payload: Dict[str, Any] = {"status": job.status}
+            pct = int(round(job.progress * 100))
+            if pct != last_progress:
+                payload["progress"] = pct
+                last_progress = pct
+            if job.status == JobStatus.DONE and job.download_url:
+                payload["download_url"] = job.download_url
+            if job.status != last_status or "progress" in payload:
                 yield f"data: {json.dumps(payload)}\n\n"
-                last = job.status
+                last_status = job.status
                 if job.status in {JobStatus.DONE, JobStatus.ERROR}:
                     break
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
     return StreamingResponse(gen(job_id), media_type="text/event-stream")
 
 @app.get("/download/{job_id}")
@@ -565,6 +586,6 @@ async def download(job_id: str):
 async def health() -> Dict[str, str]:
     return {"status": "ok"}
 
-if __name__ == "__main__":  # local dev
+if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
