@@ -33,6 +33,54 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+# ---------- Paths: make static/templates robust ----------
+from pathlib import Path
+
+# Directory of this file: .../app
+APP_DIR = Path(__file__).resolve().parent
+
+# Candidates for static/templates (works locally & on Render)
+STATIC_CANDIDATES = [
+    APP_DIR / "static",                         # app/static  (preferred)
+    APP_DIR.parent / "static",                  # repo/static
+    Path("/opt/render/project/src/app/static"), # Render common
+    Path("/opt/render/project/src/static"),     # Render if moved
+]
+TEMPLATES_CANDIDATES = [
+    APP_DIR / "templates",                         # app/templates (preferred)
+    APP_DIR.parent / "templates",                  # repo/templates
+    Path("/opt/render/project/src/app/templates"), # Render common
+    Path("/opt/render/project/src/templates"),     # Render if moved
+]
+
+def _pick_dir(candidates, create_if_missing=False, label=""):
+    for d in candidates:
+        if d.exists() and d.is_dir():
+            return d
+    # If nothing exists, optionally create the first candidate to avoid crashes
+    d = candidates[0]
+    if create_if_missing:
+        d.mkdir(parents=True, exist_ok=True)
+        logging.warning("'%s' directory not found; created fallback at: %s", label, d)
+    else:
+        logging.warning("'%s' directory not found; expected one of: %s", label, [str(c) for c in candidates])
+    return d
+
+STATIC_DIR = _pick_dir(STATIC_CANDIDATES, create_if_missing=True, label="static")
+TEMPLATES_DIR = _pick_dir(TEMPLATES_CANDIDATES, create_if_missing=False, label="templates")
+
+# Temp uploads (Render path vs. local)
+if "RENDER" in os.environ:
+    TEMP_UPLOAD_DIR = Path("/opt/render/project/src/temp_uploads")
+else:
+    TEMP_UPLOAD_DIR = APP_DIR / "temp_uploads"
+TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Mount static & templates
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
 # ---------------------- Logging & env ----------------------
 
 logging.basicConfig(level=logging.INFO)
