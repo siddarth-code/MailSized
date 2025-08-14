@@ -1,4 +1,3 @@
-<!-- app/templates/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,118 +12,151 @@
   {{ adsense_tag|safe }}
 </head>
 <body>
-  <div class="container" id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id or '' }}">
+  <div class="container">
     <header>
-      <div class="logo">
-        <div class="logo-icon"><i class="fas fa-video"></i></div>
-        <h1>MailSized</h1>
+      <div class="logo" style="display:flex;gap:10px;align-items:center;">
+        <div class="logo-icon" style="width:40px;height:40px;border-radius:8px;background:#e6f2ff;display:flex;align-items:center;justify-content:center;">
+          <i class="fas fa-video"></i>
+        </div>
+        <h1 style="font-size:28px;">MailSized</h1>
       </div>
       <p>Compress large videos to fit email attachments</p>
+
       <div style="display:flex;justify-content:center;gap:15px;margin-top:10px;">
-        <div class="constraint"><i class="fas fa-file"></i><span>≤2GB files</span></div>
-        <div class="constraint"><i class="fas fa-clock"></i><span>≤20 min videos</span></div>
+        <div class="constraint"><i class="fas fa-file"></i> <span>≤2GB files</span></div>
+        <div class="constraint"><i class="fas fa-clock"></i> <span>≤20 min videos</span></div>
       </div>
     </header>
 
-    <div class="card-container">
-      <div class="main-card">
-        <div class="progress-bar">
-          <div id="step1" class="progress-step active">1. Upload</div>
-          <div id="step2" class="progress-step">2. Payment</div>
-          <div id="step3" class="progress-step">3. Compression</div>
-          <div id="step4" class="progress-step">4. Download</div>
-        </div>
+    <!-- Top step indicator (matches .steps/.step in style.css) -->
+    <div class="steps" aria-label="workflow steps">
+      <div id="step1" class="step active">1. Upload</div>
+      <div id="step2" class="step">2. Payment</div>
+      <div id="step3" class="step">3. Compression</div>
+      <div id="step4" class="step">4. Download</div>
+    </div>
 
+    <div class="card-container" style="display:grid;grid-template-columns:1fr 320px;gap:18px;">
+      <!-- LEFT: Main flow -->
+      <div class="main-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;">
         <div class="step-content">
-          <h2 class="step-title"><i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video</h2>
+          <h2 class="step-title" style="display:flex;align-items:center;gap:8px;">
+            <i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video
+          </h2>
 
-          <div class="upload-area" id="uploadArea">
-            <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-            <h3>Click to browse or drag &amp; drop your video</h3>
+          <!-- Upload area -->
+          <div id="uploadArea" class="upload-area" role="button" tabindex="0">
+            <div class="upload-icon" style="font-size:40px;color:#0077cc;margin-bottom:6px;">
+              <i class="fas fa-cloud-upload-alt"></i>
+            </div>
+            <h3 style="margin:4px 0;">Click to browse or drag &amp; drop your video</h3>
             <p>Max file size: 2GB</p>
             <p>Supported formats: MP4, MOV, AVI, MKV</p>
-            <input type="file" id="fileInput" accept="video/*" style="display:none;">
+            <input id="fileInput" type="file" accept="video/*" style="display:none;">
           </div>
 
-          <div class="file-info" id="fileInfo" style="display:none;">
-            <div class="file-icon"><i class="fas fa-file-video"></i></div>
-            <div class="file-details">
-              <div class="file-name" id="fileName"></div>
-              <div class="file-meta">
+          <!-- Selected file details -->
+          <div id="fileInfo" class="file-info" style="display:none;border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-top:12px;display:flex;align-items:center;gap:10px;">
+            <div class="file-icon" style="font-size:22px;color:#555;"><i class="fas fa-file-video"></i></div>
+            <div class="file-details" style="flex:1;">
+              <div id="fileName" class="file-name" style="font-weight:600;"></div>
+              <div class="file-meta" style="display:flex;gap:10px;font-size:13px;color:#555;margin-top:4px;">
                 <span id="fileSize"></span>
                 <span id="fileDuration"></span>
               </div>
             </div>
-            <button class="remove-file" id="removeFile"><i class="fas fa-times"></i></button>
+            <button id="removeFile" class="remove-file" type="button" aria-label="remove file" title="Remove file" style="border:none;background:#f3f4f6;border-radius:6px;padding:6px 8px;cursor:pointer;">
+              <i class="fas fa-times"></i>
+            </button>
           </div>
 
-          <h2 class="step-title"><i class="fas fa-envelope"></i> 2. Select Email Provider</h2>
-          <div class="providers" id="providerList">
-            <button class="provider-card gmail selected" data-provider="gmail" type="button">
+          <h2 class="step-title" style="display:flex;align-items:center;gap:8px;margin-top:18px;">
+            <i class="fas fa-envelope"></i> 2. Select Email Provider
+          </h2>
+
+          <!-- Providers (buttons with required data-provider) -->
+          <div id="providerList" class="providers" role="group" aria-label="email provider">
+            <button type="button" class="provider-card selected" data-provider="gmail" aria-pressed="true">
               <div class="provider-icon"><i class="fab fa-google"></i></div>
               <div class="provider-name">Gmail</div>
-              <div class="provider-details"><div>Max attachment: 25MB</div><div class="provider-price">$1.99 – $4.99</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 25MB</div>
+                <div class="provider-price">$1.99 – $4.99</div>
+              </div>
             </button>
-            <button class="provider-card outlook" data-provider="outlook" type="button">
+
+            <button type="button" class="provider-card" data-provider="outlook" aria-pressed="false">
               <div class="provider-icon"><i class="fab fa-microsoft"></i></div>
               <div class="provider-name">Outlook</div>
-              <div class="provider-details"><div>Max attachment: 20MB</div><div class="provider-price">$2.19 – $4.99</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 20MB</div>
+                <div class="provider-price">$2.19 – $4.99</div>
+              </div>
             </button>
-            <button class="provider-card other" data-provider="other" type="button">
+
+            <button type="button" class="provider-card" data-provider="other" aria-pressed="false">
               <div class="provider-icon"><i class="fas fa-envelope"></i></div>
               <div class="provider-name">Other</div>
-              <div class="provider-details"><div>Max attachment: 15MB</div><div class="provider-price">$2.49 – $5.49</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 15MB</div>
+                <div class="provider-price">$2.49 – $5.49</div>
+              </div>
             </button>
           </div>
 
-          <h2 class="step-title"><i class="fas fa-star"></i> 3. Add Extras</h2>
-          <div class="extras">
-            <label class="extra-option">
+          <h2 class="step-title" style="display:flex;align-items:center;gap:8px;margin-top:18px;">
+            <i class="fas fa-star"></i> 3. Add Extras
+          </h2>
+
+          <div class="extras" style="display:flex;gap:14px;flex-wrap:wrap;">
+            <label class="extra-option" style="display:flex;align-items:center;gap:8px;">
               <input type="checkbox" id="priority">
               <span class="extra-label">Priority Processing</span>
               <span class="extra-price">+ $0.75</span>
             </label>
-            <label class="extra-option">
+
+            <label class="extra-option" style="display:flex;align-items:center;gap:8px;">
               <input type="checkbox" id="transcript">
               <span class="extra-label">Video Transcript</span>
               <span class="extra-price">+ $1.50</span>
             </label>
           </div>
 
-          <div class="email-input">
+          <!-- optional email -->
+          <div class="email-input" style="margin-top:12px;">
             <label for="userEmail">Your email (optional):</label>
-            <input type="email" id="userEmail" placeholder="you@example.com">
+            <input id="userEmail" type="email" placeholder="you@example.com" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;margin-top:6px;">
           </div>
 
-          <div class="payment-agreement">
-            <label>
+          <div class="payment-agreement" style="margin-top:10px;">
+            <label style="display:flex;gap:8px;align-items:flex-start;">
               <input type="checkbox" id="agree">
-              I agree to the <a href="/terms" class="terms-link" target="_blank" rel="noopener">Terms &amp; Conditions</a> (service is non‑refundable)
+              <span>I agree to the <a class="terms-link" href="/terms" target="_blank" rel="noopener">Terms &amp; Conditions</a> (service is non‑refundable)</span>
             </label>
           </div>
 
-          <div class="error-container" id="errorContainer" style="display:none;">
-            <div class="error-title"><i class="fas fa-exclamation-circle"></i><span>Error</span></div>
+          <!-- Error box (hidden by default via CSS) -->
+          <div id="errorContainer" class="error-container" role="alert">
+            <div class="error-title" style="font-weight:600;margin-bottom:6px;">
+              <i class="fas fa-exclamation-circle"></i> Error
+            </div>
             <div id="errorMessage"></div>
           </div>
 
-          <button class="action-button" id="processButton" type="button">
+          <button id="processButton" class="action-button" type="button" style="margin-top:12px;padding:12px 16px;border:none;border-radius:8px;background:#0077cc;color:#fff;font-weight:600;cursor:pointer;">
             <i class="fas fa-credit-card"></i> Pay &amp; Compress
           </button>
 
-          <!-- post-payment progress + download -->
+          <!-- Post‑payment section -->
           <div id="postPaySection" style="display:none;margin-top:16px;">
-            <div class="progress-wrapper">
-              <div class="progress-header">
-                <span>Compression in progress…</span>
-                <span id="progressPct">0%</span>
-              </div>
-              <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%;"></div></div>
-              <div class="progress-note" id="progressNote">Working…</div>
+            <div class="progress-container">
+              <div id="progressFill" class="progress-fill" style="width:0%;"></div>
+              <div id="progressPct" class="progress-pct">0%</div>
             </div>
+            <div id="progressNote" class="progress-note">Preparing…</div>
 
             <div id="downloadSection" style="display:none;margin-top:14px;">
-              <a id="downloadLink" class="action-button" href="#" download>
+              <a id="downloadLink" class="action-button" href="#" download style="display:inline-block;padding:10px 14px;border-radius:8px;background:#28a745;color:#fff;font-weight:600;">
                 <i class="fas fa-download"></i> Download Compressed Video
               </a>
               <p style="margin-top:8px;font-size:0.9rem;color:#4a5568;">We’ve also emailed your file.</p>
@@ -133,11 +165,13 @@
         </div>
       </div>
 
-      <!-- Pricing -->
-      <div class="info-card">
-        <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
-        <table class="pricing-table">
-          <thead><tr><th>Duration</th><th>Max Size</th><th>Gmail</th><th>Outlook</th><th>Other</th></tr></thead>
+      <!-- RIGHT: Pricing Summary (IDs REQUIRED by script.js) -->
+      <aside class="info-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+        <h2 style="margin-bottom:8px;"><i class="fas fa-receipt"></i> Pricing Details</h2>
+        <table class="pricing-table" style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr><th>Duration</th><th>Max Size</th><th>Gmail</th><th>Outlook</th><th>Other</th></tr>
+          </thead>
           <tbody>
             <tr><td>≤5 min</td><td>≤500 MB</td><td>$1.99</td><td>$2.19</td><td>$2.49</td></tr>
             <tr><td>≤10 min</td><td>≤1 GB</td><td>$2.99</td><td>$3.29</td><td>$3.99</td></tr>
@@ -145,20 +179,40 @@
           </tbody>
         </table>
 
-        <div class="price-summary">
-          <div class="price-item"><span>Base compression:</span><span id="basePrice">$0.00</span></div>
-          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
-          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
-          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
-          <div class="price-total"><span>Total:</span><span id="totalAmount">$0.00</span></div>
+        <div class="price-summary" style="margin-top:10px;">
+          <div class="price-row"><span>Base compression:</span> <span id="basePrice">$0.00</span></div>
+          <div class="price-row"><span>Priority Processing:</span> <span id="priorityPrice">$0.00</span></div>
+          <div class="price-row"><span>Transcript:</span> <span id="transcriptPrice">$0.00</span></div>
+          <div class="price-row"><span>Estimated tax (10%):</span> <span id="taxAmount">$0.00</span></div>
+          <div class="price-row" style="font-weight:700;"><span>Total:</span> <span id="totalAmount">$0.00</span></div>
         </div>
 
-        <div id="ad-slot-sidebar" class="hidden lg:block w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250"><div class="text-sm text-gray-500">Sponsored • placeholder</div></div>
-        <div id="ad-slot-inline" class="block lg:hidden w-full rounded-2xl shadow-sm p-3 border bg-white mt-4" style="min-height:120px;" data-ad-slot="inline-320x100"><div class="text-xs text-gray-500">Sponsored • placeholder</div></div>
-      </div>
+        <!-- Optional ad slots -->
+        <div id="ad-slot-sidebar" class="hidden lg:block w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250">
+          <div class="text-sm text-gray-500">Sponsored • placeholder</div>
+        </div>
+      </aside>
     </div>
   </div>
 
+  <!-- IMPORTANT: keep the version query so browsers bust cache after deploys -->
   <script defer src="/static/script.js?v=2025-08-14-1"></script>
+
+  <script>
+    /* Optional AdSense bootstrapping (safe if ads not enabled) */
+    if (window.adsbygoogle) {
+      const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'}];
+      slots.forEach(s=>{
+        const el=document.getElementById(s.id); if(!el) return;
+        const ins=document.createElement('ins');
+        ins.className='adsbygoogle'; ins.style.display='block';
+        ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot',s.slot);
+        ins.setAttribute('data-full-width-responsive','true');
+        el.innerHTML=''; el.appendChild(ins);
+        (adsbygoogle=window.adsbygoogle||[]).push({});
+      });
+    }
+  </script>
 </body>
 </html>
