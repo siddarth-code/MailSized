@@ -370,7 +370,7 @@ async def stripe_webhook(request: Request):
 
     asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
-
+    
 @app.get("/events/{job_id}")
 async def events(job_id: str):
     job = JOBS.get(job_id)
@@ -382,8 +382,17 @@ async def events(job_id: str):
             message="Unknown job",
         )
         put(dummy, type="state", status="error", progress=0, message="Unknown job")
-        return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
-    return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+        return StreamingResponse(
+            sse_stream(dummy),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"}  
+        )
+
+    return StreamingResponse(
+        sse_stream(job),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"}     
+    )
 
 @app.get("/download/{job_id}")
 def download(job_id: str):
