@@ -1,459 +1,192 @@
-:root {
-        --primary: #6a5af9;
-        --secondary: #d66efd;
-        --success: #48bb78;
-        --danger: #e53e3e;
-        --warning: #ecc94b;
-        --dark: #2d3748;
-        --light: #f8fafc;
-        --gray: #718096;
-        --border: #e2e8f0;
-    }
-
-    * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
-
-    body {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e4e7eb 100%);
-        color: var(--dark);
-        min-height: 100vh;
-        padding: 20px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }
-
-    .container {
-        max-width: 1000px;
-        width: 100%;
-        margin: 0 auto;
-    }
-
-    header {
-        text-align: center;
-        margin-bottom: 30px;
-        padding: 20px;
-    }
-
-    .logo {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 15px;
-        margin-bottom: 15px;
-    }
-
-    .logo-icon {
-        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-        width: 60px;
-        height: 60px;
-        border-radius: 15px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-
-    .logo-icon i {
-        font-size: 2rem;
-        color: white;
-    }
-
-    header h1 {
-        font-size: 2.2rem;
-        margin-bottom: 5px;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-
-    header p {
-        font-size: 1.1rem;
-        color: var(--gray);
-        max-width: 600px;
-        margin: 0 auto;
-        display: flex;
-        justify-content: center;
-        gap: 15px;
-    }
-
-    .constraint {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: white;
-        padding: 8px 15px;
-        border-radius: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-
-    .constraint i {
-        color: var(--primary);
-    }
-
-    .card-container {
-        display: grid;
-        grid-template-columns: 1.5fr 1fr;
-        gap: 25px;
-    }
-
-    @media (max-width: 992px) {
-        .card-container {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    .main-card {
-        background: white;
-        border-radius: 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        overflow: hidden;
-    }
-
-    .info-card {
-        background: white;
-        border-radius: 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        padding: 25px;
-        align-self: start;
-    }
-
-    .info-card h2 {
-        font-size: 1.4rem;
-        margin-bottom: 20px;
-        padding-bottom: 15px;
-        border-bottom: 2px solid var(--border);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .progress-bar {
-        display: flex;
-        background: #f5f7fa;
-        padding: 12px 10px;
-        border-bottom: 1px solid var(--border);
-    }
-
-    .progress-step {
-        flex: 1;
-        text-align: center;
-        padding: 8px 5px;
-        position: relative;
-        font-weight: 600;
-        color: #a0aec0;
-        font-size: 0.85rem;
-    }
-
-    .progress-step.active {
-        color: var(--primary);
-    }
-
-    .progress-step:not(:last-child):after {
-        content: '';
-        position: absolute;
-        top: 50%;
-        right: 0;
-        width: 50%;
-        height: 2px;
-        background: #e2e8f0;
-        transform: translateY(-50%);
-    }
-
-    .progress-step.active:after {
-        background: var(--primary);
-    }
-
-    .step-content {
-        padding: 25px;
-    }
-
-    .step-title {
-        font-size: 1.3rem;
-        margin-bottom: 15px;
-        color: var(--dark);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .step-title i {
-        color: var(--primary);
-    }
-
-    .upload-area {
-        border: 2px dashed var(--border);
-        border-radius: 12px;
-        padding: 30px 15px;
-        text-align: center;
-        background: #f8fafc;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        margin-bottom: 20px;
-    }
-
-    .upload-area:hover, .upload-area.dragover {
-        border-color: var(--primary);
-        background: #edf2f7;
-    }
-
-    .upload-icon {
-        font-size: 2.5rem;
-        color: var(--primary);
-        margin-bottom: 10px;
-    }
-
-    .file-info {
-        background: #edf2f7;
-        border-radius: 10px;
-        padding: 12px;
-        margin-top: 15px;
-        display: flex;
-        align-items: center;
-    }
-
-    .file-icon {
-        font-size: 1.8rem;
-        color: var(--primary);
-        margin-right: 12px;
-    }
-
-    .file-details {
-        flex: 1;
-    }
-
-    .file-name {
-        font-weight: bold;
-        margin-bottom: 4px;
-    }
-
-    .file-meta span {
-        margin-right: 8px;
-        font-size: 0.85rem;
-        color: var(--gray);
-    }
-
-    .remove-file {
-        background: none;
-        border: none;
-        color: var(--danger);
-        cursor: pointer;
-    }
-
-    .providers {
-        display: flex;
-        gap: 15px;
-        margin-top: 10px;
-    }
-
-    @media (max-width: 600px) {
-        .providers {
-            flex-direction: column;
-        }
-    }
-
-    .provider-card {
-        flex: 1;
-        border: 2px solid var(--border);
-        border-radius: 12px;
-        padding: 15px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-
-    .provider-card.selected {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgba(106,90,249,0.2);
-    }
-
-    .provider-icon {
-        font-size: 1.8rem;
-        color: var(--primary);
-        margin-bottom: 8px;
-    }
-
-    .provider-name {
-        font-weight: 600;
-        margin-bottom: 4px;
-    }
-
-    .provider-details {
-        font-size: 0.85rem;
-        color: var(--gray);
-    }
-
-    .extras {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-top: 10px;
-    }
-
-    .extra-option {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 8px 12px;
-    }
-
-    .extra-option input {
-        margin-right: 8px;
-    }
-
-    .extra-label {
-        flex: 1;
-    }
-
-    .extra-price {
-        color: var(--primary);
-        font-weight: 600;
-        font-size: 0.9rem;
-    }
-
-    .email-input {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 15px;
-    }
-
-    .email-input input {
-        padding: 8px 10px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        font-size: 0.9rem;
-    }
-
-    .payment-agreement {
-        margin-top: 15px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 0.85rem;
-        color: var(--gray);
-    }
-
-    .payment-agreement a {
-        color: var(--primary);
-        text-decoration: none;
-    }
-
-    .error-container {
-        margin-top: 10px;
-        padding: 10px;
-        border: 1px solid var(--danger);
-        border-radius: 8px;
-        background: #fef2f2;
-        color: var(--danger);
-    }
-
-    .error-title {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 4px;
-        font-weight: bold;
-    }
-
-    .action-button {
-        margin-top: 15px;
-        padding: 12px 20px;
-        background: var(--primary);
-        color: white;
-        border: none;
-        border-radius: 12px;
-        font-size: 1rem;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        transition: background 0.3s ease;
-    }
-
-    .action-button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .action-button:hover:not(:disabled) {
-        background: var(--secondary);
-    }
-
-    .pricing-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 20px;
-        font-size: 0.9rem;
-    }
-
-    .pricing-table th, .pricing-table td {
-        padding: 8px;
-        text-align: center;
-        border-bottom: 1px solid var(--border);
-    }
-
-    .pricing-table thead th {
-        background: #f7fafc;
-        font-weight: 600;
-    }
-
-    .price-summary {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 10px;
-        font-size: 0.9rem;
-    }
-
-    .price-item {
-        display: flex;
-        justify-content: space-between;
-    }
-
-    .price-total {
-        display: flex;
-        justify-content: space-between;
-        font-weight: bold;
-        margin-top: 4px;
-    }
-
-    .hidden {
-        display: none;
-    }
-
-    .lg\:block {
-        display: block;
-    }
-
-    .lg\:hidden {
-        display: none;
-    }
-
-    @media (min-width: 992px) {
-        .lg\:block {
-            display: block;
-        }
-        .lg\:hidden {
-            display: none;
-        }
-    }
-
-    .loading {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        border: 3px solid rgba(255, 255, 255, 0.6);
-        border-top-color: white;
-        border-radius: 50%;
-        animation: spin 0.6s linear infinite;
-    }
-
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
+/* app/static/style.css */
+
+/* ---------- reset & basics ---------- */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f9f9f9;
+  color: #333;
+}
+
+h1, h2, h3, h4, h5 {
+  margin: 0 0 10px;
+}
+
+a {
+  color: #0077cc;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- layout ---------- */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- steps ---------- */
+.steps {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.steps .step {
+  flex: 1;
+  text-align: center;
+  padding: 10px;
+  font-weight: bold;
+  background: #e0e0e0;
+  border-radius: 5px;
+  margin: 0 5px;
+  transition: background 0.3s ease;
+}
+
+.steps .step.active {
+  background: #0077cc;
+  color: #fff;
+}
+
+/* ---------- upload area ---------- */
+#uploadArea {
+  border: 2px dashed #ccc;
+  padding: 30px;
+  text-align: center;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+#uploadArea.dragover {
+  border-color: #0077cc;
+  background: #f0f8ff;
+}
+
+#fileInfo {
+  margin-top: 15px;
+  display: none;
+}
+
+.file-meta {
+  font-size: 14px;
+  margin-top: 5px;
+}
+
+/* ---------- provider buttons ---------- */
+.providers {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.providers button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.providers button.selected {
+  border-color: #0077cc;
+  background: #e6f2ff;
+}
+
+/* ---------- pricing box ---------- */
+.price-box {
+  background: #fff;
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 15px;
+  border: 1px solid #ddd;
+}
+
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 5px 0;
+}
+
+/* ---------- progress bar ---------- */
+.progress-container {
+  background: #eee;
+  border-radius: 20px;
+  overflow: hidden; /* Fix: crops fill within rounded corners */
+  height: 24px;
+  margin-top: 15px;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, #0077cc, #00aaff);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.progress-pct {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  line-height: 24px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0,0,0,0.5);
+}
+
+.progress-note {
+  margin-top: 5px;
+  font-size: 14px;
+  color: #555;
+}
+
+/* ---------- download section ---------- */
+#downloadSection {
+  display: none;
+  margin-top: 20px;
+}
+
+#downloadLink {
+  display: inline-block;
+  padding: 10px 15px;
+  background: #28a745;
+  color: #fff;
+  border-radius: 5px;
+}
+
+#downloadLink:hover {
+  background: #218838;
+}
+
+/* ---------- error message ---------- */
+#errorContainer {
+  display: none;
+  background: #fdd;
+  color: #a33;
+  padding: 10px;
+  border: 1px solid #a33;
+  border-radius: 5px;
+  margin-top: 10px;
+}
+
+#errorMessage {
+  margin: 0;
+}
