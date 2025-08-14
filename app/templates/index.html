@@ -54,6 +54,15 @@
             <p>Supported formats: MP4, MOV, AVI, MKV</p>
             <input id="fileInput" type="file" accept="video/*" style="display:none;">
           </div>
+          <div id="uploadProgress" class="progress-wrapper" style="display:none;">
+            <div class="progress-header">
+              <span>Uploading…</span>
+              <span id="uploadProgressPct">0%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" id="uploadProgressFill" style="width:0%;"></div>
+            </div>
+          </div>
 
           <!-- Selected file details -->
           <div id="fileInfo" class="file-info" style="display:none;border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-top:12px;display:flex;align-items:center;gap:10px;">
@@ -196,7 +205,7 @@
   </div>
 
   <!-- IMPORTANT: keep the version query so browsers bust cache after deploys -->
-  <script defer src="/static/script.js?v=2025-08-14-1"></script>
+  <script defer src="/static/script.js?v=2025-08-14-4"></script>
 
   <script>
     /* Optional AdSense bootstrapping (safe if ads not enabled) */
