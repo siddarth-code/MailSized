@@ -1,5 +1,5 @@
 /* app/static/script.js */
-/* MailSized script • v6.2 */
+/* MailSized script • v6.3 */
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -47,7 +47,7 @@ function tierFromDuration(sec) {
   const min = sec / 60;
   if (min <= 5) return 1;
   if (min <= 10) return 2;
-  return 3; // up to 20 via backend limits
+  return 3;
 }
 
 function calcTotals() {
@@ -140,7 +140,7 @@ async function handleFile(file) {
   try { data = await res.json(); } catch { return showError("Unexpected response from server (not JSON)."); }
   if (!data?.ok) return showError(data?.detail || "Upload rejected.");
 
-  state.uploadId   = data.upload_id;
+  state.uploadId    = data.upload_id;
   state.durationSec = Number(data.duration_sec || 0);
   state.sizeBytes   = Number(data.size_bytes || 0);
 
@@ -204,15 +204,11 @@ function wireCheckout() {
     let data;
     try { data = await res.json(); } catch { return showError("Unexpected server response (not JSON)."); }
 
-    // NEW: backend returns { url: "<stripe url>" }
-    const url = data?.url || data?.checkout_url; // keep legacy fallback just in case
-    if (!url) {
-      return showError("Checkout could not be created. Please try again.");
-    }
+    const url = data?.url || data?.checkout_url;
+    if (!url) return showError("Checkout could not be created. Please try again.");
 
-    // Redirect straight to Stripe
     setStep(1);
-    window.location.href = url;
+    window.location.href = url; // redirect to Stripe
   });
 }
 
@@ -241,6 +237,7 @@ function startSSE(jobId) {
   const noteEl = $("progressNote");
   const dlSection = $("downloadSection");
   const dlLink = $("downloadLink");
+  const emailNote = qs("#downloadSection p"); // text under the button
 
   try {
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
@@ -255,23 +252,35 @@ function startSSE(jobId) {
 
       if (data.status === "done") {
         es.close();
-        try {
-          const r = await fetch(`/download/${encodeURIComponent(jobId)}`);
-          const j = await r.json();
-          if (j?.url && dlLink) {
-            dlLink.href = j.url;
-            if (dlSection) dlSection.style.display = "";
-            setStep(3);
-            setTextSafe(noteEl, "Complete");
+
+        // Prefer URL sent by SSE (fastest), fallback to /download
+        let url = data.download_url;
+        if (!url) {
+          try {
+            const r = await fetch(`/download/${encodeURIComponent(jobId)}`);
+            const j = await r.json();
+            url = j?.url || "";
+          } catch { /* ignore */ }
+        }
+
+        if (url && dlLink) {
+          dlLink.href = url;
+          if (dlSection) dlSection.style.display = "";
+          setStep(3);
+          setTextSafe(noteEl, "Complete");
+          if (emailNote) {
+            emailNote.textContent = "We’ve also emailed your download link. The link expires in ~24 hours.";
           }
-        } catch {}
+        } else {
+          showError("Finished, but the download link was not found. Please refresh.");
+        }
       } else if (data.status === "error") {
         es.close();
         showError(data.message || "Compression failed.");
         setTextSafe(noteEl, "Error");
       }
     };
-    es.onerror = () => { /* keep connection; server sends heartbeats */ };
+    es.onerror = () => { /* server sends keep‑alives; leave UI as-is */ };
   } catch { /* noop */ }
 }
 
@@ -291,5 +300,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireCheckout();
   calcTotals();
   resumeIfPaid();
-  // console.info("MailSized script • v6.2");
+  // console.info("MailSized script • v6.3");
 });
