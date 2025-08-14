@@ -1,5 +1,5 @@
 /* app/static/script.js */
-/* MailSized script • v6.3 */
+/* MailSized script • v6.4 */
 
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -19,7 +19,6 @@ function fmtDuration(sec) {
   return `${m}:${String(s).padStart(2, "0")} min`;
 }
 function setTextSafe(el, text) { if (el) el.textContent = text; }
-
 function setStep(activeIndex) {
   const steps = [$("step1"), $("step2"), $("step3"), $("step4")].filter(Boolean);
   steps.forEach((node, i) => node.classList.toggle("active", i <= activeIndex));
@@ -41,13 +40,21 @@ const state = {
   upsell: { priority: 0.75, transcript: 1.50 },
 };
 
-/* -------------------- pricing -------------------- */
-function tierFromDuration(sec) {
-  if (!Number.isFinite(sec)) return 1;
-  const min = sec / 60;
-  if (min <= 5) return 1;
-  if (min <= 10) return 2;
-  return 3;
+/* -------------------- tiering (duration + size) -------------------- */
+const MB = 1024 * 1024;
+function tierFromDurationAndSize(sec, bytes) {
+  // duration-based
+  let tierTime = 1;
+  const min = Number(sec) / 60;
+  if (min > 10 && min <= 20) tierTime = 3;
+  else if (min > 5) tierTime = 2;
+
+  // size-based (≤500MB -> T1, ≤1GB -> T2, ≤2GB -> T3)
+  let tierSize = 1;
+  if (bytes > 500 * MB && bytes <= 1024 * MB) tierSize = 2;
+  else if (bytes > 1024 * MB) tierSize = 3;
+
+  return Math.max(tierTime, tierSize);
 }
 
 function calcTotals() {
@@ -60,7 +67,8 @@ function calcTotals() {
   const provider = state.provider || "gmail";
   const prices = state.prices[provider] || state.prices.gmail;
 
-  const tier = state.uploadId ? tierFromDuration(state.durationSec) : 1;
+  // If we’ve uploaded, use combined tier; otherwise assume Tier 1 pre-upload
+  const tier = state.uploadId ? tierFromDurationAndSize(state.durationSec, state.sizeBytes) : 1;
   state.tier = tier;
 
   const base = Number(prices[tier - 1] ?? 0);
@@ -79,6 +87,38 @@ function calcTotals() {
 }
 
 /* -------------------- upload UI -------------------- */
+function ensureUploadProgressUI() {
+  // If your HTML didn’t add the upload progress block, create it dynamically inside #uploadArea
+  let wrap = $("uploadProgress");
+  if (!wrap) {
+    const area = $("uploadArea");
+    if (!area) return;
+    wrap = document.createElement("div");
+    wrap.id = "uploadProgress";
+    wrap.className = "progress-wrapper";
+    wrap.style.display = "none";
+    wrap.innerHTML = `
+      <div class="progress-header"><span>Uploading…</span><span id="uploadProgressPct">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="uploadProgressFill" style="width:0%"></div></div>
+    `;
+    area.appendChild(wrap);
+  }
+}
+
+function showUploadProgress(pct) {
+  ensureUploadProgressUI();
+  const wrap = $("uploadProgress");
+  const pctEl = $("uploadProgressPct");
+  const fillEl = $("uploadProgressFill");
+  if (wrap) wrap.style.display = "";
+  if (pctEl) pctEl.textContent = `${Math.floor(pct)}%`;
+  if (fillEl) fillEl.style.width = `${Math.floor(pct)}%`;
+}
+function hideUploadProgress() {
+  const wrap = $("uploadProgress");
+  if (wrap) wrap.style.display = "none";
+}
+
 function wireUpload() {
   const uploadArea = $("uploadArea");
   const fileInput = $("fileInput");
@@ -113,6 +153,31 @@ function wireUpload() {
   });
 }
 
+// Upload with progress using XHR (fetch doesn’t expose upload progress)
+function uploadWithProgress(fd) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/upload");
+    xhr.upload.onprogress = (evt) => {
+      if (evt.lengthComputable) {
+        const pct = (evt.loaded / evt.total) * 100;
+        showUploadProgress(pct);
+      }
+    };
+    xhr.onload = () => {
+      hideUploadProgress();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { reject("Unexpected response from server (not JSON)."); }
+      } else {
+        reject(xhr.responseText || `Upload failed (${xhr.status})`);
+      }
+    };
+    xhr.onerror = () => { hideUploadProgress(); reject("Network error during upload."); };
+    xhr.send(fd);
+  });
+}
+
 async function handleFile(file) {
   state.file = file;
   setTextSafe($("fileName"), file.name);
@@ -125,27 +190,24 @@ async function handleFile(file) {
   const emailVal = $("userEmail")?.value?.trim();
   if (emailVal) fd.append("email", emailVal);
 
-  let res;
+  let data;
   try {
-    res = await fetch("/upload", { method: "POST", body: fd });
-  } catch {
-    return showError("Upload failed. Check your network and try again.");
-  }
-  if (!res.ok) {
-    const t = await res.text();
-    return showError(`Upload failed: ${t || res.status}`);
+    data = await uploadWithProgress(fd);
+  } catch (err) {
+    return showError(typeof err === "string" ? err : "Upload failed. Please try again.");
   }
 
-  let data;
-  try { data = await res.json(); } catch { return showError("Unexpected response from server (not JSON)."); }
   if (!data?.ok) return showError(data?.detail || "Upload rejected.");
 
-  state.uploadId    = data.upload_id;
-  state.durationSec = Number(data.duration_sec || 0);
-  state.sizeBytes   = Number(data.size_bytes || 0);
+  state.uploadId     = data.upload_id;
+  state.durationSec  = Number(data.duration_sec || 0);
+  state.sizeBytes    = Number(data.size_bytes || 0);
 
   setTextSafe($("fileDuration"), fmtDuration(state.durationSec));
-  setStep(1); // move to Payment
+  // File size already shown above from File API; keep it in sync with server if you prefer:
+  setTextSafe($("fileSize"), fmtBytes(state.sizeBytes));
+
+  setStep(1); // move to Payment step
   calcTotals();
 }
 
@@ -231,16 +293,51 @@ function resumeIfPaid() {
   startSSE(jobId);
 }
 
+let pollTimer = null;
+function startPollingDownload(jobId) {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`/download/${encodeURIComponent(jobId)}`);
+      if (r.ok) {
+        const j = await r.json();
+        if (j?.url) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          showDownloadUI(j.url);
+        }
+      }
+    } catch { /* ignore */ }
+  }, 3000);
+}
+
+function showDownloadUI(url) {
+  const dlSection = $("downloadSection");
+  const dlLink = $("downloadLink");
+  const noteEl = $("progressNote");
+  const emailNote = qs("#downloadSection p");
+  if (dlLink && url) dlLink.href = url;
+  if (dlSection) dlSection.style.display = "";
+  setStep(3);
+  setTextSafe(noteEl, "Complete");
+  if (emailNote) {
+    emailNote.textContent = "We’ve also emailed your download link. The link expires in ~24 hours.";
+  }
+}
+
 function startSSE(jobId) {
   const pctEl = $("progressPct");
   const fillEl = $("progressFill");
   const noteEl = $("progressNote");
-  const dlSection = $("downloadSection");
-  const dlLink = $("downloadLink");
-  const emailNote = qs("#downloadSection p"); // text under the button
 
   try {
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
+
+    es.onopen = () => {
+      // Start a lightweight fallback poller just in case the last SSE message is missed
+      startPollingDownload(jobId);
+    };
+
     es.onmessage = async (evt) => {
       let data = {};
       try { data = JSON.parse(evt.data || "{}"); } catch {}
@@ -252,35 +349,30 @@ function startSSE(jobId) {
 
       if (data.status === "done") {
         es.close();
+        clearInterval(pollTimer); pollTimer = null;
 
-        // Prefer URL sent by SSE (fastest), fallback to /download
+        // Prefer URL in SSE payload; fallback to /download
         let url = data.download_url;
         if (!url) {
           try {
             const r = await fetch(`/download/${encodeURIComponent(jobId)}`);
             const j = await r.json();
             url = j?.url || "";
-          } catch { /* ignore */ }
+          } catch {}
         }
-
-        if (url && dlLink) {
-          dlLink.href = url;
-          if (dlSection) dlSection.style.display = "";
-          setStep(3);
-          setTextSafe(noteEl, "Complete");
-          if (emailNote) {
-            emailNote.textContent = "We’ve also emailed your download link. The link expires in ~24 hours.";
-          }
-        } else {
-          showError("Finished, but the download link was not found. Please refresh.");
-        }
+        if (url) showDownloadUI(url);
+        else showError("Finished, but the download link was not found. Please refresh.");
       } else if (data.status === "error") {
         es.close();
+        clearInterval(pollTimer); pollTimer = null;
         showError(data.message || "Compression failed.");
         setTextSafe(noteEl, "Error");
       }
     };
-    es.onerror = () => { /* server sends keep‑alives; leave UI as-is */ };
+
+    es.onerror = () => {
+      // Keep UI; poller is running as a fallback
+    };
   } catch { /* noop */ }
 }
 
@@ -295,10 +387,11 @@ function hideError() { const box = $("errorContainer"); if (box) box.style.displ
 
 /* -------------------- boot -------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+  ensureUploadProgressUI();   // create progress UI if it’s not in HTML
   wireUpload();
   wireProviders();
   wireCheckout();
   calcTotals();
   resumeIfPaid();
-  // console.info("MailSized script • v6.3");
+  // console.info("MailSized script • v6.4");
 });
