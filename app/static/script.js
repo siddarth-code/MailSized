@@ -1,6 +1,6 @@
 /* app/static/script.js */
+/* MailSized script • v6.2 */
 
-/* -------------------- helpers -------------------- */
 const $ = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -12,24 +12,17 @@ function fmtBytes(n) {
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
-
 function fmtDuration(sec) {
   if (!Number.isFinite(sec) || sec <= 0) return "0:00 min";
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, "0")} min`;
 }
-
-function setTextSafe(el, text) {
-  if (el) el.textContent = text;
-}
+function setTextSafe(el, text) { if (el) el.textContent = text; }
 
 function setStep(activeIndex) {
   const steps = [$("step1"), $("step2"), $("step3"), $("step4")].filter(Boolean);
-  steps.forEach((node, i) => {
-    if (!node) return;
-    node.classList.toggle("active", i <= activeIndex);
-  });
+  steps.forEach((node, i) => node.classList.toggle("active", i <= activeIndex));
 }
 
 /* -------------------- state -------------------- */
@@ -41,11 +34,11 @@ const state = {
   provider: "gmail",
   tier: 1,
   prices: {
-    gmail: [1.99, 2.99, 4.99],
+    gmail:   [1.99, 2.99, 4.99],
     outlook: [2.19, 3.29, 4.99],
-    other: [2.49, 3.99, 5.49],
+    other:   [2.49, 3.99, 5.49],
   },
-  upsell: { priority: 0.75, transcript: 1.5 },
+  upsell: { priority: 0.75, transcript: 1.50 },
 };
 
 /* -------------------- pricing -------------------- */
@@ -67,23 +60,22 @@ function calcTotals() {
   const provider = state.provider || "gmail";
   const prices = state.prices[provider] || state.prices.gmail;
 
-  // if we don't have a duration yet (pre-upload), assume tier 1 just for display
   const tier = state.uploadId ? tierFromDuration(state.durationSec) : 1;
   state.tier = tier;
 
-  const base = prices[tier - 1] || 0;
-  const pri = $("priority")?.checked ? state.upsell.priority : 0;
-  const tra = $("transcript")?.checked ? state.upsell.transcript : 0;
-  const subtotal = (base || 0) + (pri || 0) + (tra || 0);
+  const base = Number(prices[tier - 1] ?? 0);
+  const pri  = $("priority")?.checked ? state.upsell.priority : 0;
+  const tra  = $("transcript")?.checked ? state.upsell.transcript : 0;
+
+  const subtotal = Number(base) + Number(pri) + Number(tra);
   const tax = subtotal * 0.10;
   const total = subtotal + tax;
 
-  // write safely (elements may be missing in some templates)
-  setTextSafe(baseEl, `$${(base || 0).toFixed(2)}`);
-  setTextSafe(priorityEl, `$${(pri || 0).toFixed(2)}`);
-  setTextSafe(transcriptEl, `$${(tra || 0).toFixed(2)}`);
-  setTextSafe(taxEl, `$${(tax || 0).toFixed(2)}`);
-  setTextSafe(totalEl, `$${(total || 0).toFixed(2)}`);
+  setTextSafe(baseEl,       `$${base.toFixed(2)}`);
+  setTextSafe(priorityEl,   `$${Number(pri).toFixed(2)}`);
+  setTextSafe(transcriptEl, `$${Number(tra).toFixed(2)}`);
+  setTextSafe(taxEl,        `$${tax.toFixed(2)}`);
+  setTextSafe(totalEl,      `$${total.toFixed(2)}`);
 }
 
 /* -------------------- upload UI -------------------- */
@@ -91,11 +83,9 @@ function wireUpload() {
   const uploadArea = $("uploadArea");
   const fileInput = $("fileInput");
   const fileInfo = $("fileInfo");
-
   if (!uploadArea || !fileInput) return;
 
   const openPicker = () => fileInput.click();
-
   ["click", "keypress"].forEach((evt) => {
     uploadArea.addEventListener(evt, (e) => {
       if (e.type === "keypress" && e.key !== "Enter" && e.key !== " ") return;
@@ -103,22 +93,15 @@ function wireUpload() {
     });
   });
 
-  uploadArea.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    uploadArea.classList.add("dragover");
-  });
+  uploadArea.addEventListener("dragover", (e) => { e.preventDefault(); uploadArea.classList.add("dragover"); });
   uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("dragover"));
   uploadArea.addEventListener("drop", (e) => {
     e.preventDefault();
     uploadArea.classList.remove("dragover");
-    if (e.dataTransfer?.files?.[0]) {
-      handleFile(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer?.files?.[0]) handleFile(e.dataTransfer.files[0]);
   });
 
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
-  });
+  fileInput.addEventListener("change", () => { if (fileInput.files?.[0]) handleFile(fileInput.files[0]); });
 
   $("removeFile")?.addEventListener("click", () => {
     state.file = null;
@@ -132,14 +115,11 @@ function wireUpload() {
 
 async function handleFile(file) {
   state.file = file;
-
-  // show file preview/details
   setTextSafe($("fileName"), file.name);
   setTextSafe($("fileSize"), fmtBytes(file.size));
   setTextSafe($("fileDuration"), "probing…");
   if ($("fileInfo")) $("fileInfo").style.display = "";
 
-  // upload → /upload
   const fd = new FormData();
   fd.append("file", file);
   const emailVal = $("userEmail")?.value?.trim();
@@ -148,30 +128,24 @@ async function handleFile(file) {
   let res;
   try {
     res = await fetch("/upload", { method: "POST", body: fd });
-  } catch (e) {
+  } catch {
     return showError("Upload failed. Check your network and try again.");
   }
   if (!res.ok) {
     const t = await res.text();
     return showError(`Upload failed: ${t || res.status}`);
   }
+
   let data;
-  try {
-    data = await res.json();
-  } catch (e) {
-    return showError("Unexpected response from server (not JSON).");
-  }
+  try { data = await res.json(); } catch { return showError("Unexpected response from server (not JSON)."); }
+  if (!data?.ok) return showError(data?.detail || "Upload rejected.");
 
-  if (!data?.ok) {
-    return showError(data?.detail || "Upload rejected.");
-  }
-
-  state.uploadId = data.upload_id;
+  state.uploadId   = data.upload_id;
   state.durationSec = Number(data.duration_sec || 0);
-  state.sizeBytes = Number(data.size_bytes || 0);
+  state.sizeBytes   = Number(data.size_bytes || 0);
 
   setTextSafe($("fileDuration"), fmtDuration(state.durationSec));
-  setStep(1); // Upload complete, move to payment step
+  setStep(1); // move to Payment
   calcTotals();
 }
 
@@ -179,6 +153,7 @@ async function handleFile(file) {
 function wireProviders() {
   const list = $("providerList") || qs(".providers");
   if (!list) return;
+
   list.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-provider]");
     if (!btn) return;
@@ -222,27 +197,22 @@ function wireCheckout() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-    } catch (e) {
+    } catch {
       return showError("Could not start checkout. Please try again.");
     }
 
     let data;
-    try {
-      data = await res.json();
-    } catch {
-      return showError("Unexpected server response (not JSON).");
+    try { data = await res.json(); } catch { return showError("Unexpected server response (not JSON)."); }
+
+    // NEW: backend returns { url: "<stripe url>" }
+    const url = data?.url || data?.checkout_url; // keep legacy fallback just in case
+    if (!url) {
+      return showError("Checkout could not be created. Please try again.");
     }
 
-    // If your server returns Stripe URL, go there
-    if (data?.checkout_url) {
-      window.location.href = data.checkout_url;
-      return;
-    }
-
-    // Otherwise, show a nudge; real job will be started by Stripe webhook.
-    // (On return from Stripe, we resume via ?paid=1&job_id=...)
+    // Redirect straight to Stripe
     setStep(1);
-    alert("Proceed to payment. After payment completes, you'll be redirected back here.");
+    window.location.href = url;
   });
 }
 
@@ -257,14 +227,11 @@ function resumeIfPaid() {
   const url = new URL(window.location.href);
   const paid = url.searchParams.get("paid") === "1" || fromDataset.paid;
   const jobId = url.searchParams.get("job_id") || fromDataset.jobId;
-
   if (!paid || !jobId) return;
 
-  // show progress section
   const post = $("postPaySection");
   if (post) post.style.display = "";
-
-  setStep(2); // Compression step
+  setStep(2);
   startSSE(jobId);
 }
 
@@ -279,11 +246,7 @@ function startSSE(jobId) {
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
     es.onmessage = async (evt) => {
       let data = {};
-      try {
-        data = JSON.parse(evt.data || "{}");
-      } catch {
-        // ignore
-      }
+      try { data = JSON.parse(evt.data || "{}"); } catch {}
 
       const p = Number(data.progress || 0);
       setTextSafe(pctEl, `${Math.floor(p)}%`);
@@ -292,31 +255,24 @@ function startSSE(jobId) {
 
       if (data.status === "done") {
         es.close();
-        // fetch a real download URL
         try {
           const r = await fetch(`/download/${encodeURIComponent(jobId)}`);
           const j = await r.json();
           if (j?.url && dlLink) {
             dlLink.href = j.url;
             if (dlSection) dlSection.style.display = "";
-            setStep(3); // Download step
+            setStep(3);
             setTextSafe(noteEl, "Complete");
           }
-        } catch {
-          // ignore
-        }
+        } catch {}
       } else if (data.status === "error") {
         es.close();
         showError(data.message || "Compression failed.");
         setTextSafe(noteEl, "Error");
       }
     };
-    es.onerror = () => {
-      // keep the bar visible; SSE heartbeats keep connection alive server-side
-    };
-  } catch (e) {
-    // ignore
-  }
+    es.onerror = () => { /* keep connection; server sends heartbeats */ };
+  } catch { /* noop */ }
 }
 
 /* -------------------- error UI -------------------- */
@@ -326,16 +282,14 @@ function showError(msg) {
   if (msgEl) msgEl.textContent = String(msg || "Something went wrong.");
   if (box) box.style.display = "";
 }
-function hideError() {
-  const box = $("errorContainer");
-  if (box) box.style.display = "none";
-}
+function hideError() { const box = $("errorContainer"); if (box) box.style.display = "none"; }
 
 /* -------------------- boot -------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   wireUpload();
   wireProviders();
   wireCheckout();
-  calcTotals();        // initializes the price box safely
-  resumeIfPaid();      // resumes progress if we came back from Stripe
+  calcTotals();
+  resumeIfPaid();
+  // console.info("MailSized script • v6.2");
 });
