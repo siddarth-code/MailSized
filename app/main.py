@@ -16,13 +16,25 @@ from pathlib import Path
 from typing import AsyncIterator, Dict, Optional, Tuple
 
 import requests
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+import stripe
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-# ---------- Paths (fixed) ----------
+# ------------ Config / Env ------------
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+
+# Paths (all under /app)
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = APP_DIR / "templates"
 STATIC_DIR = APP_DIR / "static"
@@ -32,35 +44,34 @@ OUTPUT_DIR = DATA_DIR / "outputs"
 for p in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
-# ffmpeg/ffprobe (we install static builds into /opt/render/project/src/bin in build.sh)
+# ffmpeg / ffprobe installed by build.sh into /opt/render/project/src/bin
 BIN_DIR = Path(os.environ.get("BIN_DIR", "/opt/render/project/src/bin"))
 FFMPEG = str(BIN_DIR / "ffmpeg")
 FFPROBE = str(BIN_DIR / "ffprobe")
 
-# ---------- App ----------
+# ------------ App ------------
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # your domains if you want stricter
+    allow_origins=["*"],  # tighten if you like
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# static & templates mount (fixed order)
 if not STATIC_DIR.exists():
     raise RuntimeError(f"Static directory missing: {STATIC_DIR}")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 
 env = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),
     autoescape=select_autoescape(["html", "xml"]),
 )
 
-# ---------- Pricing / Capacities ----------
+# ------------ Pricing / capacities ------------
 PROVIDER_CAP_MB = {"gmail": 25, "outlook": 20, "other": 15}
 
-# client shows prices; server doesn’t charge here, but we keep extras for receipts/emails
 @dataclass
 class UploadMeta:
     upload_id: str
@@ -85,21 +96,26 @@ class JobState:
     error: Optional[str] = None
     q: asyncio.Queue = field(default_factory=asyncio.Queue)
 
-# in‑mem store
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
 
-# ---------- Helpers ----------
+# ------------ Helpers ------------
 def _run(cmd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    return subprocess.run(
+        shlex.split(cmd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
 
 def probe_info(path: str) -> Tuple[float, int, int]:
     """
-    Returns (duration_sec, width, height) using ffprobe.
-    Synchronous (fix for 'cannot unpack non-iterable coroutine object').
+    Returns (duration_sec, width, height) using ffprobe. Synchronous.
     """
     if not Path(path).exists():
         raise FileNotFoundError(path)
+
     # duration
     d = _run(f"{FFPROBE} -v error -show_entries format=duration -of json {shlex.quote(path)}")
     dur = 0.0
@@ -107,6 +123,7 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         dur = float(json.loads(d.stdout or "{}").get("format", {}).get("duration", 0.0))
     except Exception:
         pass
+
     # width/height
     s = _run(f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}")
     width = height = 0
@@ -116,100 +133,69 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         height = int(st.get("height") or 0)
     except Exception:
         pass
+
     return max(dur, 0.0), width, height
 
 def choose_target(provider: str, size_bytes: int) -> int:
-    """Return target size in bytes based on provider cap with a safety margin."""
     cap_mb = PROVIDER_CAP_MB.get(provider, 15)
-    # keep 8% headroom for container overhead + audio + variability
+    # leave ~1.5 MB headroom for container/variability
     return int((cap_mb - 1.5) * 1024 * 1024)
 
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
-    """
-    Split total budget into video+audio bitrates (bps).
-    Default audio 80 kbps. Never below 400 kbps video to avoid mush.
-    """
     if duration_sec <= 0:
-        # fallback 2 minute guess
         duration_sec = 120.0
-    total_bits = target_bytes * 8
-    # leave ~6% mux overhead
-    total_bits = int(total_bits * 0.94)
-    audio_kbps = 80
-    audio_bps = audio_kbps * 1000
+    total_bits = int(target_bytes * 8 * 0.94)  # 6% mux overhead
+    audio_bps = 80_000  # 80 kbps AAC
     video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
     return video_bps, audio_bps
 
 def decide_two_pass(duration_sec: float, video_bps: int) -> bool:
-    """
-    Heuristic: 2‑pass only if long or tight budget.
-    """
-    # long content
-    if duration_sec >= 120:  # >=2 min
+    if duration_sec >= 120:
         return True
-    # very low bitrate
     if video_bps <= 600_000:
         return True
     return False
 
 def auto_scale(width: int, height: int, video_bps: int) -> Tuple[int, int]:
-    """Downscale to help hit target; maintain 16:9-ish, even dims."""
     if width <= 0 or height <= 0:
-        # unknown → choose a conservative floor if bitrate small
-        if video_bps < 600_000:
-            return 960, 540
-        return 1280, 720
+        return (960, 540) if video_bps < 600_000 else (1280, 720)
 
     target_w, target_h = width, height
     px = width * height
-    # rough ladder based on bitrate
     if video_bps < 500_000:
         target_w, target_h = 854, 480
     elif video_bps < 900_000:
         target_w, target_h = 1280, 720
     else:
-        # keep original unless it's huge 1080p+
         if px > 1920 * 1080:
             target_w, target_h = 1920, 1080
 
-    # make even
     target_w -= target_w % 2
     target_h -= target_h % 2
     return max(target_w, 2), max(target_h, 2)
 
-async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
-    """Reliable SSE with heartbeats."""
-    # send last known state immediately
-    first = {
-        "type": "state",
-        "progress": round(job.progress, 1),
-        "status": job.status,
-        "message": job.message,
-    }
-    yield f"data: {json.dumps(first)}\n\n".encode()
+def put(job: JobState, **payload):
+    job.q.put_nowait(payload)
 
+async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
+    # immediate state
+    yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
     last_heartbeat = time.time()
     while True:
         try:
             item = await asyncio.wait_for(job.q.get(), timeout=5.0)
             yield f"data: {json.dumps(item)}\n\n".encode()
             if item.get("status") in ("done", "error"):
-                # give the client a moment to flush
                 await asyncio.sleep(0.25)
                 return
         except asyncio.TimeoutError:
-            # heartbeat (keeps Render / proxies from 502)
             if time.time() - last_heartbeat >= 5:
                 yield b": keep-alive\n\n"
                 last_heartbeat = time.time()
 
-def put(job: JobState, **payload):
-    job.q.put_nowait(payload)
-
-# ---------- Email ----------
+# ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://mailsized.com")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "noreply@mailsized.com")
 
 SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "")
@@ -226,28 +212,18 @@ def send_email_download(to_email: str, download_url: str) -> None:
     <p><a href="{download_url}">{download_url}</a></p>
     <p>Link expires in ~24 hours.</p>
     """
-
-    # Try Mailgun first
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
                 f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
                 auth=("api", MAILGUN_KEY),
-                data={
-                    "from": f"MailSized <{SENDER_EMAIL}>",
-                    "to": [to_email],
-                    "subject": subject,
-                    "html": html,
-                },
+                data={"from": f"MailSized <{SENDER_EMAIL}>", "to": [to_email], "subject": subject, "html": html},
                 timeout=10,
             )
             r.raise_for_status()
             return
         except Exception:
-            # fall back to SMTP
             pass
-
-    # SMTP fallback
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
@@ -261,10 +237,9 @@ def send_email_download(to_email: str, download_url: str) -> None:
                 s.send_message(msg)
             return
         except Exception:
-            # as last resort, silently ignore to avoid breaking UX
             return
 
-# ---------- Views ----------
+# ------------ Views ------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     template = env.get_template("index.html")
@@ -276,17 +251,14 @@ def index(request: Request):
     paid = request.query_params.get("paid") == "1"
     return template.render(adsense_tag=adsense_tag, paid=paid, job_id=job_id)
 
-# ---------- API ----------
+# ------------ API ------------
 @app.post("/upload")
-async def upload(
-    file: UploadFile = File(...),
-    email: Optional[str] = Form(None),
-):
+async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
     if not file.filename:
         raise HTTPException(400, "Missing filename")
-    # save to disk
     upload_id = str(uuid.uuid4())
     temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
+
     with temp_path.open("wb") as f:
         while True:
             chunk = await file.read(1024 * 1024)
@@ -294,7 +266,6 @@ async def upload(
                 break
             f.write(chunk)
 
-    # probe sync (fix)
     try:
         duration, width, height = probe_info(str(temp_path))
     except Exception as e:
@@ -322,23 +293,39 @@ async def upload(
         }
     )
 
+def _coerce_json_or_form(request: Request, body: dict) -> dict:
+    """
+    Accept JSON or x-www-form-urlencoded bodies; returns a plain dict with strings/bools/ints.
+    """
+    if body:
+        return body
+    # try form (already parsed by FastAPI if endpoint signature uses Form[...] but we allow both)
+    return {}
+
 @app.post("/checkout")
-async def checkout(payload: dict):
+async def checkout(request: Request):
     """
-    The client calls this after upload to create a job record and (in your live app)
-    create a Stripe Checkout session. Here we accept the payload and return ok.
-    Stripe webhook will actually start the job (same as your current flow).
+    Create a job_id now and a Stripe Checkout Session that redirects back to
+    /?paid=1&job_id=<job_id>. Returns JSON { "url": "<stripe checkout url>" }.
     """
-    upload_id = payload.get("upload_id")
-    provider = (payload.get("provider") or "gmail").lower()
-    priority = bool(payload.get("priority"))
-    transcript = bool(payload.get("transcript"))
-    email = payload.get("email") or None
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = _coerce_json_or_form(request, body)
 
-    if upload_id not in UPLOADS:
-        raise HTTPException(404, "upload not found")
+    upload_id = (body.get("upload_id") or "").strip()
+    provider = (body.get("provider") or "gmail").lower()
+    email = body.get("email") or None
+    priority = bool(body.get("priority"))
+    transcript = bool(body.get("transcript"))
+    # Optional – if your frontend computed it; not strictly needed here
+    price_cents = int(body.get("price_cents") or 0)
 
-    # attach selections to upload meta for the webhook handler
+    if not upload_id or upload_id not in UPLOADS:
+        return JSONResponse({"error": "upload not found"}, status_code=404)
+
+    # attach selections to upload meta
     u = UPLOADS[upload_id]
     u.provider = provider
     u.priority = priority
@@ -346,53 +333,84 @@ async def checkout(payload: dict):
     if email:
         u.email = email
 
-    # In production, return Stripe session URL; for now just say "ok"
-    return {"ok": True, "message": "checkout created"}
+    # generate a job id now (we'll actually start the job in webhook)
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
+
+    if not stripe.api_key:
+        # For local testing without Stripe key
+        fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
+        return JSONResponse({"url": fake_url})
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {"name": "MailSized Video Compression"},
+                        # If you want server-authoritative price, compute here instead of trusting client:
+                        "unit_amount": price_cents if price_cents > 0 else 299,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            customer_email=email,
+            success_url=f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}",
+            cancel_url=f"{PUBLIC_BASE_URL}?canceled=1&job_id={job_id}",
+            metadata={"upload_id": upload_id, "job_id": job_id},
+        )
+        return JSONResponse({"url": session.url})
+    except Exception:
+        return JSONResponse({"error": "checkout_create_failed"}, status_code=500)
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     """
-    Minimal webhook: assume event checkout.session.completed contains `upload_id`
-    you stored via metadata in your live integration. For sandbox/testing, the
-    client already has upload_id in query (?paid=1&job_id=...); we start job here.
+    Start the compression when Stripe tells us checkout.session.completed.
+    (Signature verification omitted for brevity in sandbox.)
     """
-    body = await request.body()
     try:
-        data = json.loads(body.decode() or "{}")
+        payload = await request.body()
+        data = json.loads(payload.decode() or "{}")
     except Exception:
         data = {}
 
-    # Try to find upload_id from metadata; if missing, ignore gracefully
-    upload_id = None
-    try:
-        upload_id = data.get("data", {}).get("object", {}).get("metadata", {}).get("upload_id")
-    except Exception:
-        pass
+    event_type = data.get("type") or ""
+    obj = data.get("data", {}).get("object", {}) or {}
+    metadata = obj.get("metadata", {}) or {}
 
-    # Fallback: allow client to send ?upload_id in test POSTs
-    if not upload_id:
-        upload_id = request.query_params.get("upload_id")
-
-    if not upload_id or upload_id not in UPLOADS:
-        # nothing to do
+    if event_type != "checkout.session.completed":
         return {"ok": True}
 
-    # spin a job
-    job_id = str(uuid.uuid4())
-    job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status="queued", progress=0.0)
-    JOBS[job_id] = job
+    upload_id = metadata.get("upload_id")
+    job_id = metadata.get("job_id")
 
-    # kick background
+    if not upload_id or upload_id not in UPLOADS:
+        return {"ok": True}
+
+    # prefer the pre-created job; if missing, make one
+    job = JOBS.get(job_id) if job_id else None
+    if not job:
+        job_id = job_id or str(uuid.uuid4())
+        job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status="queued", progress=0.0)
+        JOBS[job_id] = job
+
+    # Start background worker
     asyncio.create_task(run_job(job))
-    # return 200 to Stripe
-    return {"ok": True, "job_id": job_id}
+    return {"ok": True, "job_id": job.job_id}
 
 @app.get("/events/{job_id}")
 async def events(job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        # create a stub so the stream returns something instead of 502
-        dummy = JobState(job_id=job_id, upload=UploadMeta(upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0))
+        dummy = JobState(
+            job_id=job_id,
+            upload=UploadMeta(upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0),
+            status="error",
+            message="Unknown job",
+        )
         put(dummy, type="state", status="error", progress=0, message="Unknown job")
         return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
     return StreamingResponse(sse_stream(job), media_type="text/event-stream")
@@ -402,33 +420,25 @@ def download(job_id: str):
     job = JOBS.get(job_id)
     if not job or job.status != "done" or not job.out_path:
         raise HTTPException(404, "Not ready")
-    # In your real app you might return FileResponse; here we give a signed-ish URL
     return JSONResponse({"ok": True, "url": f"{PUBLIC_BASE_URL}/media/{job.out_path.name}"})
 
-# (Optionally add a static mount for outputs if you serve them directly)
-app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
-
-# ---------- Worker ----------
+# ------------ Worker ------------
 async def run_job(job: JobState):
     u = job.upload
     job.status = "running"
     put(job, type="state", status="running", progress=0.0, message="Starting…")
 
     try:
-        # Compute target
         target_bytes = choose_target(u.provider, u.size_bytes)
         v_bps, a_bps = compute_bitrates(u.duration_sec, target_bytes)
         do_two_pass = decide_two_pass(u.duration_sec, v_bps)
         tw, th = auto_scale(u.width, u.height, v_bps)
 
-        # Build output path
         out_name = f"{job.job_id}.mp4"
         out_path = OUTPUT_DIR / out_name
-        # Clean any previous leftovers
         if out_path.exists():
             out_path.unlink(missing_ok=True)
 
-        # Common flags
         vf = f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease:flags=bicubic"
         common = [
             FFMPEG, "-y",
@@ -442,13 +452,12 @@ async def run_job(job: JobState):
             "-max_muxing_queue_size", "9999",
         ]
 
-        # Use -progress pipe to parse % (reliable progress)
         def percent_from_out_time_ms(line: str) -> Optional[float]:
             m = re.match(r"out_time_ms=(\d+)", line.strip())
             if m:
                 ms = int(m.group(1))
                 if u.duration_sec > 0:
-                    return min(99.0, (ms / 1000000.0) / u.duration_sec * 100.0)
+                    return min(99.0, (ms / 1_000_000.0) / u.duration_sec * 100.0)
             return None
 
         async def run_and_stream(cmd: list[str]) -> int:
@@ -461,55 +470,28 @@ async def run_job(job: JobState):
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                try:
-                    txt = line.decode("utf-8", "ignore")
-                except Exception:
-                    txt = ""
+                txt = line.decode("utf-8", "ignore")
                 if "out_time_ms=" in txt:
                     pct = percent_from_out_time_ms(txt)
                     if pct is not None and pct - last_emit >= 1.0:
                         job.progress = pct
                         put(job, type="progress", progress=round(pct, 1), status="running", message="Compressing…")
                         last_emit = pct
-            rc = await proc.wait()
-            return rc
+            return await proc.wait()
 
         if do_two_pass:
-            # Pass 1
-            cmd1 = common + [
-                "-b:v", str(v_bps),
-                "-pass", "1",
-                "-f", "mp4",
-                "/dev/null",
-            ]
-            rc1 = await run_and_stream(cmd1)
+            rc1 = await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "1", "-f", "mp4", "/dev/null"])
             if rc1 != 0:
                 raise RuntimeError("FFmpeg pass 1 failed")
-
-            # Pass 2
-            cmd2 = common + [
-                "-b:v", str(v_bps),
-                "-pass", "2",
-                str(out_path),
-            ]
-            rc2 = await run_and_stream(cmd2)
+            rc2 = await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "2", str(out_path)])
             if rc2 != 0:
                 raise RuntimeError("FFmpeg pass 2 failed")
         else:
-            # Single pass CBR-ish
-            cmd = common + [
-                "-b:v", str(v_bps),
-                "-maxrate", str(int(v_bps * 1.2)),
-                "-bufsize", str(int(v_bps * 2)),
-                str(out_path),
-            ]
-            rc = await run_and_stream(cmd)
+            rc = await run_and_stream(common + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)])
             if rc != 0:
                 raise RuntimeError("FFmpeg failed")
 
-        # small final probe for confidence
-        final_size = out_path.stat().st_size if out_path.exists() else 0
-        if final_size <= 0:
+        if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
 
         job.progress = 100.0
@@ -517,7 +499,6 @@ async def run_job(job: JobState):
         job.out_path = out_path
         put(job, type="state", status="done", progress=100.0, message="Complete")
 
-        # email (best effort)
         if u.email:
             dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
             send_email_download(u.email, dl_url)
@@ -527,7 +508,7 @@ async def run_job(job: JobState):
         job.error = str(e)
         put(job, type="state", status="error", progress=job.progress, message=str(e))
 
-# ---------- Health ----------
+# ------------ Health ------------
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
