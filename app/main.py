@@ -53,7 +53,7 @@ FFPROBE = str(BIN_DIR / "ffprobe")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten if you like
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -110,13 +110,10 @@ def _run(cmd: str) -> subprocess.CompletedProcess:
     )
 
 def probe_info(path: str) -> Tuple[float, int, int]:
-    """
-    Returns (duration_sec, width, height) using ffprobe. Synchronous.
-    """
+    """Returns (duration_sec, width, height) using ffprobe. Synchronous."""
     if not Path(path).exists():
         raise FileNotFoundError(path)
 
-    # duration
     d = _run(f"{FFPROBE} -v error -show_entries format=duration -of json {shlex.quote(path)}")
     dur = 0.0
     try:
@@ -124,7 +121,6 @@ def probe_info(path: str) -> Tuple[float, int, int]:
     except Exception:
         pass
 
-    # width/height
     s = _run(f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}")
     width = height = 0
     try:
@@ -138,14 +134,13 @@ def probe_info(path: str) -> Tuple[float, int, int]:
 
 def choose_target(provider: str, size_bytes: int) -> int:
     cap_mb = PROVIDER_CAP_MB.get(provider, 15)
-    # leave ~1.5 MB headroom for container/variability
-    return int((cap_mb - 1.5) * 1024 * 1024)
+    return int((cap_mb - 1.5) * 1024 * 1024)  # headroom
 
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     if duration_sec <= 0:
         duration_sec = 120.0
     total_bits = int(target_bytes * 8 * 0.94)  # 6% mux overhead
-    audio_bps = 80_000  # 80 kbps AAC
+    audio_bps = 80_000  # 80 kbps
     video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
     return video_bps, audio_bps
 
@@ -254,60 +249,49 @@ def index(request: Request):
 # ------------ API ------------
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
-    if not file.filename:
-        raise HTTPException(400, "Missing filename")
-    upload_id = str(uuid.uuid4())
-    temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
+  if not file.filename:
+      raise HTTPException(400, "Missing filename")
+  upload_id = str(uuid.uuid4())
+  temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
 
-    with temp_path.open("wb") as f:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
+  with temp_path.open("wb") as f:
+      while True:
+          chunk = await file.read(1024 * 1024)
+          if not chunk:
+              break
+          f.write(chunk)
 
-    try:
-        duration, width, height = probe_info(str(temp_path))
-    except Exception as e:
-        raise HTTPException(400, f"Probe failed: {e}")
+  try:
+      duration, width, height = probe_info(str(temp_path))
+  except Exception as e:
+      raise HTTPException(400, f"Probe failed: {e}")
 
-    meta = UploadMeta(
-        upload_id=upload_id,
-        src_path=temp_path,
-        size_bytes=temp_path.stat().st_size,
-        duration_sec=duration,
-        width=width,
-        height=height,
-        email=email or None,
-    )
-    UPLOADS[upload_id] = meta
+  meta = UploadMeta(
+      upload_id=upload_id,
+      src_path=temp_path,
+      size_bytes=temp_path.stat().st_size,
+      duration_sec=duration,
+      width=width,
+      height=height,
+      email=email or None,
+  )
+  UPLOADS[upload_id] = meta
 
-    return JSONResponse(
-        {
-            "ok": True,
-            "upload_id": upload_id,
-            "duration_sec": duration,
-            "size_bytes": meta.size_bytes,
-            "width": width,
-            "height": height,
-        }
-    )
+  return JSONResponse({
+      "ok": True,
+      "upload_id": upload_id,
+      "duration_sec": duration,
+      "size_bytes": meta.size_bytes,
+      "width": width,
+      "height": height,
+  })
 
 def _coerce_json_or_form(request: Request, body: dict) -> dict:
-    """
-    Accept JSON or x-www-form-urlencoded bodies; returns a plain dict with strings/bools/ints.
-    """
-    if body:
-        return body
-    # try form (already parsed by FastAPI if endpoint signature uses Form[...] but we allow both)
-    return {}
+    return body or {}
 
 @app.post("/checkout")
 async def checkout(request: Request):
-    """
-    Create a job_id now and a Stripe Checkout Session that redirects back to
-    /?paid=1&job_id=<job_id>. Returns JSON { "url": "<stripe checkout url>" }.
-    """
+    """Create job + Stripe Checkout URL; return JSON { url }."""
     try:
         body = await request.json()
     except Exception:
@@ -319,13 +303,11 @@ async def checkout(request: Request):
     email = body.get("email") or None
     priority = bool(body.get("priority"))
     transcript = bool(body.get("transcript"))
-    # Optional – if your frontend computed it; not strictly needed here
     price_cents = int(body.get("price_cents") or 0)
 
     if not upload_id or upload_id not in UPLOADS:
         return JSONResponse({"error": "upload not found"}, status_code=404)
 
-    # attach selections to upload meta
     u = UPLOADS[upload_id]
     u.provider = provider
     u.priority = priority
@@ -333,29 +315,23 @@ async def checkout(request: Request):
     if email:
         u.email = email
 
-    # generate a job id now (we'll actually start the job in webhook)
     job_id = str(uuid.uuid4())
     JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
 
     if not stripe.api_key:
-        # For local testing without Stripe key
-        fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
-        return JSONResponse({"url": fake_url})
+        return JSONResponse({"url": f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"})
 
     try:
         session = stripe.checkout.Session.create(
             mode="payment",
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {"name": "MailSized Video Compression"},
-                        # If you want server-authoritative price, compute here instead of trusting client:
-                        "unit_amount": price_cents if price_cents > 0 else 299,
-                    },
-                    "quantity": 1,
-                }
-            ],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "MailSized Video Compression"},
+                    "unit_amount": price_cents if price_cents > 0 else 299,
+                },
+                "quantity": 1,
+            }],
             customer_email=email,
             success_url=f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}",
             cancel_url=f"{PUBLIC_BASE_URL}?canceled=1&job_id={job_id}",
@@ -367,10 +343,7 @@ async def checkout(request: Request):
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
-    """
-    Start the compression when Stripe tells us checkout.session.completed.
-    (Signature verification omitted for brevity in sandbox.)
-    """
+    """Start compression when Stripe says checkout.session.completed."""
     try:
         payload = await request.body()
         data = json.loads(payload.decode() or "{}")
@@ -386,18 +359,15 @@ async def stripe_webhook(request: Request):
 
     upload_id = metadata.get("upload_id")
     job_id = metadata.get("job_id")
-
     if not upload_id or upload_id not in UPLOADS:
         return {"ok": True}
 
-    # prefer the pre-created job; if missing, make one
     job = JOBS.get(job_id) if job_id else None
     if not job:
         job_id = job_id or str(uuid.uuid4())
         job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status="queued", progress=0.0)
         JOBS[job_id] = job
 
-    # Start background worker
     asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
 
@@ -494,14 +464,18 @@ async def run_job(job: JobState):
         if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
 
+        # --- Finalize: broadcast URL immediately; email in parallel ---
         job.progress = 100.0
         job.status = "done"
         job.out_path = out_path
-        put(job, type="state", status="done", progress=100.0, message="Complete")
+        dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
 
+        # Tell the browser RIGHT NOW
+        put(job, type="state", status="done", progress=100.0, message="Complete", download_url=dl_url)
+
+        # Email (non-blocking)
         if u.email:
-            dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
-            send_email_download(u.email, dl_url)
+            asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
 
     except Exception as e:
         job.status = "error"
