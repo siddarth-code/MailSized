@@ -26,8 +26,9 @@
     </header>
 
     <div class="card-container">
+      <!-- Left: main flow -->
       <div class="main-card">
-        <!-- Steps -->
+        <!-- Top step tracker (visual only) -->
         <div class="progress-bar">
           <div id="step1" class="progress-step active">1. Upload</div>
           <div id="step2" class="progress-step">2. Payment</div>
@@ -35,12 +36,11 @@
           <div id="step4" class="progress-step">4. Download</div>
         </div>
 
-        <!-- Content -->
         <div class="step-content">
+          <!-- Upload -->
           <h2 class="step-title"><i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video</h2>
 
-          <!-- Upload area -->
-          <div class="upload-area" id="uploadArea">
+          <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="Upload area">
             <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
             <h3>Click to browse or drag &amp; drop your video</h3>
             <p>Max file size: 2GB</p>
@@ -48,18 +48,19 @@
             <input type="file" id="fileInput" accept="video/*" style="display:none;">
           </div>
 
-          <!-- Selected file details -->
           <div class="file-info" id="fileInfo" style="display:none;">
             <div class="file-icon"><i class="fas fa-file-video"></i></div>
             <div class="file-details">
-              <div class="file-name" id="fileName"></div>
+              <div class="file-name" id="fileName">—</div>
               <div class="file-meta">
-                <span id="fileSize"></span><span id="fileDuration"></span>
+                <span id="fileSize">—</span>
+                <span id="fileDuration"></span>
               </div>
             </div>
-            <button class="remove-file" id="removeFile"><i class="fas fa-times"></i></button>
+            <button class="remove-file" id="removeFile" aria-label="Remove selected file"><i class="fas fa-times"></i></button>
           </div>
 
+          <!-- Provider -->
           <h2 class="step-title"><i class="fas fa-envelope"></i> 2. Select Email Provider</h2>
           <div class="providers" id="providerList">
             <button class="provider-card gmail selected" data-provider="gmail" type="button">
@@ -90,6 +91,7 @@
             </button>
           </div>
 
+          <!-- Extras -->
           <h2 class="step-title"><i class="fas fa-star"></i> 3. Add Extras</h2>
           <div class="extras">
             <label class="extra-option">
@@ -97,6 +99,7 @@
               <span class="extra-label">Priority Processing</span>
               <span class="extra-price">+ $0.75</span>
             </label>
+
             <label class="extra-option">
               <input type="checkbox" id="transcript">
               <span class="extra-label">Video Transcript</span>
@@ -104,11 +107,13 @@
             </label>
           </div>
 
+          <!-- Email (optional) -->
           <div class="email-input">
             <label for="userEmail">Your email (optional):</label>
-            <input type="email" id="userEmail" placeholder="you@example.com">
+            <input type="email" id="userEmail" placeholder="you@example.com" autocomplete="email">
           </div>
 
+          <!-- Terms -->
           <div class="payment-agreement">
             <label>
               <input type="checkbox" id="agree">
@@ -116,18 +121,18 @@
             </label>
           </div>
 
+          <!-- Errors -->
           <div class="error-container" id="errorContainer" style="display:none;">
-            <div class="error-title">
-              <i class="fas fa-exclamation-circle"></i><span>Error</span>
-            </div>
+            <div class="error-title"><i class="fas fa-exclamation-circle"></i><span>Error</span></div>
             <div id="errorMessage"></div>
           </div>
 
+          <!-- Pay -->
           <button class="action-button" id="processButton" type="button">
             <i class="fas fa-credit-card"></i> Pay &amp; Compress
           </button>
 
-          <!-- Download + progress -->
+          <!-- Post-pay live progress + download -->
           <div id="postPaySection" style="display:none;margin-top:16px;">
             <div class="progress-wrapper">
               <div class="progress-header">
@@ -150,7 +155,7 @@
         </div>
       </div>
 
-      <!-- Right card: Pricing -->
+      <!-- Right: pricing -->
       <div class="info-card">
         <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
         <table class="pricing-table">
@@ -164,30 +169,16 @@
           </tbody>
         </table>
 
-        <!-- These IDs are required by JS (keep them) -->
+        <!-- These IDs must exist for script.js -->
         <div class="price-summary">
-          <div class="price-item">
-            <span>Base compression:</span>
-            <span id="basePrice">$0.00</span>
-          </div>
-          <div class="price-item">
-            <span>Priority Processing:</span>
-            <span id="priorityPrice">$0.00</span>
-          </div>
-          <div class="price-item">
-            <span>Transcript:</span>
-            <span id="transcriptPrice">$0.00</span>
-          </div>
-          <div class="price-item">
-            <span>Estimated tax (10%):</span>
-            <span id="taxAmount">$0.00</span>
-          </div>
-          <div class="price-total">
-            <span>Total:</span>
-            <span id="totalAmount">$0.00</span>
-          </div>
+          <div class="price-item"><span>Base compression:</span><span id="basePrice">$0.00</span></div>
+          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
+          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
+          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
+          <div class="price-total"><span>Total:</span><span id="totalAmount">$0.00</span></div>
         </div>
-    
+
+        <!-- (Optional) Ad slots -->
         <div id="ad-slot-sidebar" class="hidden lg:block w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250">
           <div class="text-sm text-gray-500">Sponsored • placeholder</div>
         </div>
@@ -198,8 +189,10 @@
     </div>
   </div>
 
-  <script defer src="/static/script.js?v=2025-08-13-1"></script>
+  <!-- Keep the version query so you can bump cache when updating JS -->
+  <script defer src="/static/script.js?v=2025-08-13-2"></script>
   <script>
+    // Optional AdSense rendering
     if (window.adsbygoogle) {
       const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'},{id:'ad-slot-inline',slot:'inline-320x100'}];
       slots.forEach(s=>{
