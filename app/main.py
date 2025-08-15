@@ -312,6 +312,13 @@ def index(request: Request):
     paid = request.query_params.get("paid") == "1"
     return template.render(adsense_tag=adsense_tag, paid=paid, job_id=job_id)
 
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms() -> str:
+    """Serve the Terms & Conditions page."""
+    template = env.get_template("terms.html")
+    return template.render()
+
 # ------------ API ------------
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
