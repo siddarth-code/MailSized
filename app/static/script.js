@@ -1,8 +1,7 @@
 /* app/static/script.js */
-/* MailSized script • v6.3 */
+/* MailSized script • v6.4 */
 
 const $ = (id) => document.getElementById(id);
-const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function fmtBytes(n) {
@@ -20,8 +19,11 @@ function fmtDuration(sec) {
 }
 function setTextSafe(el, text) { if (el) el.textContent = text; }
 function setStep(activeIndex) {
-  const steps = [$("step1"), $("step2"), $("step3"), $("step4")].filter(Boolean);
-  steps.forEach((node, i) => node.classList.toggle("active", i <= activeIndex));
+  const ids = ["step1","step2","step3","step4"];
+  ids.forEach((id, i) => {
+    const n = $(id); if (!n) return;
+    n.classList.toggle("active", i <= activeIndex);
+  });
 }
 
 /* -------------------- state -------------------- */
@@ -36,64 +38,47 @@ const state = {
   upsell: { priority: 0.75, transcript: 1.50 },
 };
 
-/* -------------------- pricing -------------------- */
-function tierFromDuration(sec) {
-  if (!Number.isFinite(sec)) return 1;
-  const min = sec / 60;
-  if (min <= 5) return 1;
-  if (min <= 10) return 2;
-  return 3;
-}
-function calcTotals() {
-  const baseEl = $("basePrice");
-  const priorityEl = $("priorityPrice");
-  const transcriptEl = $("transcriptPrice");
-  const taxEl = $("taxAmount");
-  const totalEl = $("totalAmount");
-
+function tierFromDuration(sec){ if(!Number.isFinite(sec))return 1; const m=sec/60; return m<=5?1:m<=10?2:3; }
+function calcTotals(){
   const provider = state.provider || "gmail";
   const prices = state.prices[provider] || state.prices.gmail;
-
   const tier = state.uploadId ? tierFromDuration(state.durationSec) : 1;
   state.tier = tier;
 
-  const base = Number(prices[tier - 1] ?? 0);
+  const base = Number(prices[tier-1] ?? 0);
   const pri  = $("priority")?.checked ? state.upsell.priority : 0;
   const tra  = $("transcript")?.checked ? state.upsell.transcript : 0;
-
-  const subtotal = Number(base) + Number(pri) + Number(tra);
+  const subtotal = base + Number(pri) + Number(tra);
   const tax = subtotal * 0.10;
   const total = subtotal + tax;
 
-  setTextSafe(baseEl,       `$${base.toFixed(2)}`);
-  setTextSafe(priorityEl,   `$${Number(pri).toFixed(2)}`);
-  setTextSafe(transcriptEl, `$${Number(tra).toFixed(2)}`);
-  setTextSafe(taxEl,        `$${tax.toFixed(2)}`);
-  setTextSafe(totalEl,      `$${total.toFixed(2)}`);
+  setTextSafe($("basePrice"),       `$${base.toFixed(2)}`);
+  setTextSafe($("priorityPrice"),   `$${Number(pri).toFixed(2)}`);
+  setTextSafe($("transcriptPrice"), `$${Number(tra).toFixed(2)}`);
+  setTextSafe($("taxAmount"),       `$${tax.toFixed(2)}`);
+  setTextSafe($("totalAmount"),     `$${total.toFixed(2)}`);
 }
 
-/* -------------------- upload UI -------------------- */
-function wireUpload() {
+/* -------------------- upload -------------------- */
+function wireUpload(){
   const uploadArea = $("uploadArea");
   const fileInput = $("fileInput");
-  const fileInfo = $("fileInfo");
+  const fileInfo  = $("fileInfo");
   if (!uploadArea || !fileInput) return;
 
   const openPicker = () => fileInput.click();
-  ["click","keypress"].forEach((evt) => {
+  ["click","keypress"].forEach(evt=>{
     uploadArea.addEventListener(evt,(e)=>{
       if (e.type==="keypress" && e.key!=="Enter" && e.key!==" ") return;
       openPicker();
     });
   });
-
-  uploadArea.addEventListener("dragover",(e)=>{ e.preventDefault(); uploadArea.classList.add("dragover"); });
-  uploadArea.addEventListener("dragleave",()=> uploadArea.classList.remove("dragover"));
+  uploadArea.addEventListener("dragover",(e)=>{e.preventDefault();uploadArea.classList.add("dragover");});
+  uploadArea.addEventListener("dragleave",()=>uploadArea.classList.remove("dragover"));
   uploadArea.addEventListener("drop",(e)=>{
     e.preventDefault(); uploadArea.classList.remove("dragover");
     if (e.dataTransfer?.files?.[0]) handleFile(e.dataTransfer.files[0]);
   });
-
   fileInput.addEventListener("change",()=>{ if (fileInput.files?.[0]) handleFile(fileInput.files[0]); });
 
   $("removeFile")?.addEventListener("click",()=>{
@@ -103,18 +88,17 @@ function wireUpload() {
   });
 }
 
-async function handleFile(file) {
+async function handleFile(file){
   state.file = file;
   setTextSafe($("fileName"), file.name);
   setTextSafe($("fileSize"), fmtBytes(file.size));
   setTextSafe($("fileDuration"), "probing…");
   if ($("fileInfo")) $("fileInfo").style.display = "";
 
-  // show upload bar
-  const upWrap = $("uploadProgress"); const upFill = $("uploadProgressFill");
-  const upPct = $("uploadProgressPct"); const upNote = $("uploadNote");
-  if (upWrap) upWrap.style.display = "";
-  if (upNote) upNote.style.display = "";
+  // show simple upload progress (non-streaming)
+  const upWrap=$("uploadProgress"), upFill=$("uploadFill"), upPct=$("uploadPct"), upNote=$("uploadNote");
+  if (upWrap) upWrap.style.display="";
+  if (upNote) upNote.style.display="";
 
   const fd = new FormData();
   fd.append("file", file);
@@ -122,13 +106,9 @@ async function handleFile(file) {
   if (emailVal) fd.append("email", emailVal);
 
   let res;
-  try {
-    res = await fetch("/upload", { method: "POST", body: fd });
-  } catch {
-    return showError("Upload failed. Check your network and try again.");
-  }
+  try { res = await fetch("/upload",{ method:"POST", body:fd }); }
+  catch { return showError("Upload failed. Check your network and try again."); }
 
-  // we can’t stream upload % without xhr; fake a quick fill for UX
   if (upFill) upFill.style.width = "100%";
   if (upPct) upPct.textContent = "100%";
   if (upNote) upNote.textContent = "Uploaded";
@@ -137,9 +117,7 @@ async function handleFile(file) {
     const t = await res.text();
     return showError(`Upload failed: ${t || res.status}`);
   }
-
-  let data;
-  try { data = await res.json(); } catch { return showError("Unexpected response from server (not JSON)."); }
+  let data; try { data = await res.json(); } catch { return showError("Unexpected response from server (not JSON)."); }
   if (!data?.ok) return showError(data?.detail || "Upload rejected.");
 
   state.uploadId    = data.upload_id;
@@ -147,35 +125,37 @@ async function handleFile(file) {
   state.sizeBytes   = Number(data.size_bytes || 0);
 
   setTextSafe($("fileDuration"), fmtDuration(state.durationSec));
-  setStep(1);
-  calcTotals();
+  setStep(1); calcTotals();
 }
 
-/* -------------------- provider & extras -------------------- */
-function wireProviders() {
-  const list = $("providerList") || qs(".providers");
+/* -------------------- providers & extras -------------------- */
+function wireProviders(){
+  const list = $("providerList");
   if (!list) return;
-
   list.addEventListener("click",(e)=>{
     const btn = e.target.closest("[data-provider]"); if (!btn) return;
-    qsa("[data-provider]", list).forEach((n)=> n.classList.remove("selected"));
+    qsa("[data-provider]",list).forEach(n=>n.classList.remove("selected"));
     btn.classList.add("selected");
-    state.provider = (btn.getAttribute("data-provider") || "gmail").toLowerCase();
+    state.provider = (btn.getAttribute("data-provider")||"gmail").toLowerCase();
     calcTotals();
   });
-
   $("priority")?.addEventListener("change", calcTotals);
   $("transcript")?.addEventListener("change", calcTotals);
 }
 
 /* -------------------- pay & compress -------------------- */
-function wireCheckout() {
+function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s || ""); }
+
+function wireCheckout(){
   const btn = $("processButton");
   if (!btn) return;
 
-  btn.addEventListener("click", async () => {
+  btn.addEventListener("click", async ()=>{
     hideError();
+
     if (!state.file || !state.uploadId) return showError("Please upload a video first.");
+    const email = $("userEmail")?.value?.trim() || "";
+    if (!isValidEmail(email)) return showError("Please enter a valid email. It is required to receive your download link.");
     if (!$("agree")?.checked) return showError("Please accept the Terms & Conditions.");
 
     const payload = {
@@ -183,7 +163,7 @@ function wireCheckout() {
       provider: state.provider,
       priority: !!$("priority")?.checked,
       transcript: !!$("transcript")?.checked,
-      email: $("userEmail")?.value?.trim() || "",
+      email,
     };
 
     let res;
@@ -197,9 +177,7 @@ function wireCheckout() {
       return showError("Could not start checkout. Please try again.");
     }
 
-    let data;
-    try { data = await res.json(); } catch { return showError("Unexpected server response (not JSON)."); }
-
+    let data; try { data = await res.json(); } catch { return showError("Unexpected server response (not JSON)."); }
     const url = data?.url || data?.checkout_url;
     if (!url) return showError("Checkout could not be created. Please try again.");
 
@@ -208,38 +186,26 @@ function wireCheckout() {
   });
 }
 
-/* -------------------- post‑payment progress -------------------- */
-function resumeIfPaid() {
-  const root = $("pageRoot");
-  const fromDataset = {
-    paid: root?.getAttribute("data-paid") === "1",
-    jobId: root?.getAttribute("data-job-id") || "",
-  };
-
+/* -------------------- post-payment progress -------------------- */
+function resumeIfPaid(){
   const url = new URL(window.location.href);
-  const paid = url.searchParams.get("paid") === "1" || fromDataset.paid;
-  const jobId = url.searchParams.get("job_id") || fromDataset.jobId;
+  const paid = url.searchParams.get("paid") === "1" || document.body.getAttribute("data-paid")==="1";
+  const jobId = url.searchParams.get("job_id") || document.body.getAttribute("data-job-id") || "";
   if (!paid || !jobId) return;
 
-  const post = $("postPaySection");
-  if (post) post.style.display = "";
+  const post = $("postPaySection"); if (post) post.style.display="";
   setStep(2);
   startSSE(jobId);
 }
 
-function startSSE(jobId) {
-  const pctEl = $("progressPct");
-  const fillEl = $("progressFill");
-  const noteEl = $("progressNote");
-  const dlSection = $("downloadSection");
-  const dlLink = $("downloadLink");
-  const emailNote = $("downloadEmailNote");
+function startSSE(jobId){
+  const pctEl=$("progressPct"), fillEl=$("progressFill"), noteEl=$("progressNote");
+  const dlSection=$("downloadSection"), dlLink=$("downloadLink"), emailNote=$("emailNote");
 
-  try {
+  try{
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
-    es.onmessage = async (evt) => {
-      let data = {};
-      try { data = JSON.parse(evt.data || "{}"); } catch {}
+    es.onmessage = async (evt)=>{
+      let data={}; try{ data = JSON.parse(evt.data || "{}"); }catch{}
 
       const p = Number(data.progress || 0);
       setTextSafe(pctEl, `${Math.floor(p)}%`);
@@ -249,7 +215,10 @@ function startSSE(jobId) {
       if (data.status === "done") {
         es.close();
 
-        // Prefer SSE-provided URL; fall back to /download
+        // Reveal the section immediately
+        if (dlSection) dlSection.style.display = "";
+
+        // Prefer SSE-provided URL; otherwise fetch it
         let url = data.download_url || "";
         if (!url) {
           try {
@@ -259,10 +228,8 @@ function startSSE(jobId) {
           } catch {}
         }
 
-        // Show the section either way; if url exists, wire it up
-        if (dlSection) dlSection.style.display = "";
         if (url && dlLink) dlLink.href = url;
-        if (emailNote) emailNote.style.display = ""; // show note regardless of SMTP/Mailgun
+        if (emailNote) emailNote.style.display = "";
 
         setStep(3);
         setTextSafe(noteEl, "Complete");
@@ -272,21 +239,20 @@ function startSSE(jobId) {
         setTextSafe(noteEl, "Error");
       }
     };
-    es.onerror = () => { /* server heartbeats keep it alive; ignore */ };
-  } catch { /* noop */ }
+    es.onerror = ()=>{};
+  }catch{}
 }
 
-/* -------------------- error UI -------------------- */
-function showError(msg) {
-  const box = $("errorContainer");
-  const msgEl = $("errorMessage");
+/* -------------------- errors -------------------- */
+function showError(msg){
+  const box=$("errorContainer"), msgEl=$("errorMessage");
   if (msgEl) msgEl.textContent = String(msg || "Something went wrong.");
   if (box) box.style.display = "";
 }
-function hideError() { const box = $("errorContainer"); if (box) box.style.display = "none"; }
+function hideError(){ const box=$("errorContainer"); if (box) box.style.display="none"; }
 
 /* -------------------- boot -------------------- */
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded",()=>{
   wireUpload();
   wireProviders();
   wireCheckout();
