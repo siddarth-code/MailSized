@@ -8,10 +8,10 @@ This repository contains both the FastAPI backend and the FastHTML/Jinja2 fronte
 
 - ✅ Compress videos up to **2 GB** or **20 minutes** in length
 - ✅ Tiered pricing with three levels:
-  - **Tier 1** – ≤ 5 min & ≤ 100 MB → **$1.99**
-  - **Tier 2** – ≤ 10 min & ≤ 200 MB → **$2.99**
-  - **Tier 3** – ≤ 20 min & ≤ 400 MB → **$4.99**
-  (Jobs larger than 400 MB or over 20 minutes are rejected.)
+  - **Tier 1** – 0-500 MB → **$1.99**
+  - **Tier 2** – 501 mb - 1 GB → **$2.99**
+  - **Tier 3** – ≤ 1.01 GB - 2 GB → **$4.99**
+  (Jobs larger than 2 GB or over 20 minutes are rejected.)
 - ✅ Optional upsells: **Priority processing (+$0.75)** and **Transcript (+$1.50)**
 - ✅ Live stepper UI showing **Upload → Payment → Compression → Download**
 - ✅ Server‑Sent Event feed for real‑time job status updates
