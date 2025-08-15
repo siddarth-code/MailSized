@@ -19,6 +19,7 @@ import requests
 import stripe
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -51,6 +52,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 
 if not STATIC_DIR.exists():
     raise RuntimeError(f"Static directory missing: {STATIC_DIR}")
@@ -62,8 +64,23 @@ env = Environment(
     autoescape=select_autoescape(["html", "xml"]),
 )
 
-# ------------ Attachment caps (unchanged) ------------
+# ------------ Attachment caps / limits ------------
 PROVIDER_CAP_MB = {"gmail": 25, "outlook": 20, "other": 15}
+# some tests expect this legacy name
+PROVIDER_TARGETS_MB = PROVIDER_CAP_MB
+
+# Global upload constraints
+MAX_SIZE_GB = 2
+MAX_DURATION_SEC = 20 * 60  # 20 minutes
+
+# Download expiry (cleanup) in minutes
+DOWNLOAD_TTL_MIN = float(os.getenv("DOWNLOAD_TTL_MIN", "30"))
+
+class JobStatus:
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
 
 # ------------ Size-based pricing (NEW server-authoritative) ------------
 # S1: 0–250MB = $1.99, S2: 251–750MB = $3.99, S3: 751MB–1.25GB = $5.99, S4: 1.26–2.00GB = $7.99
@@ -95,7 +112,7 @@ class UploadMeta:
 class JobState:
     job_id: str
     upload: UploadMeta
-    status: str = "queued"  # queued|running|done|error
+    status: str = JobStatus.QUEUED  # queued|running|done|error
     progress: float = 0.0
     message: str = ""
     out_path: Optional[Path] = None
@@ -104,6 +121,9 @@ class JobState:
 
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
+# legacy aliases expected by some tests
+uploads = UPLOADS
+jobs = JOBS
 
 # ------------ Helpers ------------
 def _run(cmd: str) -> subprocess.CompletedProcess:
@@ -137,6 +157,11 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         pass
 
     return max(dur, 0.0), width, height
+
+def probe_duration(path: str) -> float:
+    """Convenience wrapper returning only the duration."""
+    dur, _, _ = probe_info(path)
+    return dur
 
 def choose_target(provider: str, size_bytes: int) -> int:
     cap_mb = PROVIDER_CAP_MB.get(provider, 15)
@@ -259,6 +284,9 @@ def send_email_download(to_email: str, download_url: str) -> None:
             msg["From"] = SENDER_EMAIL
             msg["To"] = to_email
             msg["Subject"] = subject
+            msg["Auto-Submitted"] = "auto-generated"
+            msg["X-Auto-Response-Suppress"] = "All"
+            msg["Reply-To"] = "no-reply@mailsized.com"
             msg.set_content(html, subtype="html")
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
                 s.starttls()
@@ -267,6 +295,10 @@ def send_email_download(to_email: str, download_url: str) -> None:
             return
         except Exception:
             return
+
+async def send_email(to_email: str, download_url: str) -> None:
+    """Async wrapper used in tests."""
+    await asyncio.to_thread(send_email_download, to_email, download_url)
 
 # ------------ Views ------------
 @app.get("/", response_class=HTMLResponse)
@@ -285,21 +317,33 @@ def index(request: Request):
 async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
     if not file.filename:
         raise HTTPException(400, "Missing filename")
+    if not (file.content_type or "").startswith("video/"):
+        raise HTTPException(400, "Unsupported file type")
     upload_id = str(uuid.uuid4())
     temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
 
     # save with streaming (front-end shows progress)
+    max_bytes = int(MAX_SIZE_GB * 1024 * 1024 * 1024)
+    written = 0
     with temp_path.open("wb") as f:
         while True:
             chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
+            written += len(chunk)
+            if written > max_bytes:
+                temp_path.unlink(missing_ok=True)
+                raise HTTPException(400, "File exceeds 2GB limit")
             f.write(chunk)
 
     try:
         duration, width, height = probe_info(str(temp_path))
     except Exception as e:
         raise HTTPException(400, f"Probe failed: {e}")
+
+    if duration > MAX_DURATION_SEC:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(400, "Video exceeds 20 minute limit")
 
     meta = UploadMeta(
         upload_id=upload_id,
@@ -358,10 +402,12 @@ async def checkout(request: Request):
 
     # generate a job id now (we'll actually start the job in webhook)
     job_id = str(uuid.uuid4())
-    JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
+    job = JobState(job_id=job_id, upload=u, status=JobStatus.QUEUED, progress=0.0)
+    JOBS[job_id] = job
 
     if not stripe.api_key:
-        # local / dev behavior
+        # local / dev behavior: start job immediately and return fake success URL
+        asyncio.create_task(run_job(job))
         fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
         return JSONResponse({"url": fake_url})
 
@@ -436,11 +482,34 @@ def download(job_id: str):
         raise HTTPException(404, "Not ready")
     return JSONResponse({"ok": True, "url": f"{PUBLIC_BASE_URL}/media/{job.out_path.name}"})
 
+async def cleanup_job(job_id: str) -> None:
+    """Remove files and purge job/upload metadata."""
+    job = JOBS.pop(job_id, None)
+    if not job:
+        return
+    up = job.upload
+    try:
+        if up.upload_id in UPLOADS:
+            UPLOADS.pop(up.upload_id, None)
+        if up.src_path.exists():
+            up.src_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        if job.out_path and job.out_path.exists():
+            job.out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+async def _schedule_cleanup(job_id: str) -> None:
+    await asyncio.sleep(DOWNLOAD_TTL_MIN * 60)
+    await cleanup_job(job_id)
+
 # ------------ Worker ------------
 async def run_job(job: JobState):
     u = job.upload
-    job.status = "running"
-    put(job, type="state", status="running", progress=0.0, message="Starting…")
+    job.status = JobStatus.RUNNING
+    put(job, type="state", status=JobStatus.RUNNING, progress=0.0, message="Starting…")
 
     try:
         target_bytes = choose_target(u.provider, u.size_bytes)
@@ -510,21 +579,23 @@ async def run_job(job: JobState):
 
         # Finalize: broadcast URL immediately; email in parallel
         job.progress = 100.0
-        job.status = "done"
+        job.status = JobStatus.DONE
         job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
 
         # Tell the browser now (ensures on‑page download link appears)
-        put(job, type="state", status="done", progress=100.0, message="Complete", download_url=dl_url)
+        put(job, type="state", status=JobStatus.DONE, progress=100.0, message="Complete", download_url=dl_url)
 
         # Email (non-blocking)
         if u.email:
             asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
 
+        asyncio.create_task(_schedule_cleanup(job.job_id))
+
     except Exception as e:
-        job.status = "error"
+        job.status = JobStatus.ERROR
         job.error = str(e)
-        put(job, type="state", status="error", progress=job.progress, message=str(e))
+        put(job, type="state", status=JobStatus.ERROR, progress=job.progress, message=str(e))
 
 # ------------ Health ------------
 @app.get("/healthz")

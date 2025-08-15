@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [tool.black]
 line-length = 100
 target-version = ["py311"]
-exclude = "(/build/|/dist/|/node_modules/|/\.venv/|/temp_uploads/|/\.git/|/\.mypy_cache/|/__pycache__/|/mailsized/|/slides_template\.js|/answer\.js)"
+exclude = '(/build/|/dist/|/node_modules/|/\.venv/|/temp_uploads/|/\.git/|/\.mypy_cache/|/__pycache__/|/mailsized/|/slides_template\.js|/answer\.js)'
 
 [tool.ruff]
 line-length = 100

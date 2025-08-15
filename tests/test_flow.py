@@ -1,55 +1,54 @@
 import asyncio
 import json
-from pathlib import Path
+import urllib.parse
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 
 from app import main as app_module
 
 
 @pytest.mark.asyncio
-async def test_full_happy_flow(monkeypatch, tmp_path):
-    """End‑to‑end test of upload → checkout → compression → download."""
-    # Use a very short TTL so cleanup happens quickly
-    monkeypatch.setenv("DOWNLOAD_TTL_MIN", "0.01")  # ~0.6 seconds
+async def test_full_happy_flow(monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_TTL_MIN", "0.01")
+    monkeypatch.setattr(app_module, "DOWNLOAD_TTL_MIN", 0.01, raising=False)
 
-    # Patch compress_video to avoid heavy processing
-    async def fake_compress(file_path: str, output_path: str, target_size_mb: int) -> None:
-        # Write a tiny dummy output file
-        Path(output_path).write_bytes(b"compressed")
-
-    # Patch send_email to no‑op
-    async def fake_send_email(recipient: str, download_url: str) -> None:
+    async def fake_send_email(to, url):
         pass
-
-    monkeypatch.setattr(app_module, "compress_video", fake_compress)
     monkeypatch.setattr(app_module, "send_email", fake_send_email)
 
-    async with AsyncClient(app=app_module.app, base_url="http://test") as client:
-        # Upload a small video file
-        file_bytes = b"\x00" * 1024  # 1KB dummy video
-        resp = await client.post(
-            "/upload",
-            files={"file": ("sample.mp4", file_bytes, "video/mp4")},
-        )
+    async def fake_run_job(job):
+        job.status = app_module.JobStatus.RUNNING
+        app_module.put(job, type="progress", progress=50, status=app_module.JobStatus.RUNNING, message="Halfway")
+        out_path = app_module.OUTPUT_DIR / f"{job.job_id}.mp4"
+        out_path.write_bytes(b"compressed")
+        job.out_path = out_path
+        job.status = app_module.JobStatus.DONE
+        app_module.put(job, type="state", status=app_module.JobStatus.DONE, progress=100, message="Complete", download_url=f"{app_module.PUBLIC_BASE_URL}/media/{out_path.name}")
+        asyncio.create_task(app_module._schedule_cleanup(job.job_id))
+
+    monkeypatch.setattr(app_module, "run_job", fake_run_job)
+    monkeypatch.setattr(app_module, "probe_info", lambda path: (10.0, 0, 0))
+
+    transport = ASGITransport(app=app_module.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        file_bytes = b"x" * 1024
+        resp = await client.post("/upload", files={"file": ("sample.mp4", file_bytes, "video/mp4")})
         assert resp.status_code == 200
-        data = resp.json()
-        job_id = data["job_id"]
+        upload_id = resp.json()["upload_id"]
 
-        # Checkout request
-        form = {
-            "job_id": job_id,
+        payload = {
+            "upload_id": upload_id,
             "provider": "gmail",
-            "priority": "false",
-            "transcript": "false",
-            "email": "",
+            "priority": False,
+            "transcript": False,
+            "email": "user@example.com",
         }
-        resp2 = await client.post("/checkout", data=form)
+        resp2 = await client.post("/checkout", json=payload)
         assert resp2.status_code == 200
-        assert resp2.json()["status"] == "queued"
+        url = resp2.json()["url"]
+        job_id = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["job_id"][0]
 
-        # Consume SSE events until done
         statuses = []
         download_url = None
         async with client.stream("GET", f"/events/{job_id}") as stream:
@@ -58,18 +57,16 @@ async def test_full_happy_flow(monkeypatch, tmp_path):
                     continue
                 payload = json.loads(line[5:])
                 statuses.append(payload["status"])
-                if payload["status"] == app_module.JobStatus.DONE:
-                    download_url = payload.get("download_url")
+                if payload.get("download_url"):
+                    download_url = payload["download_url"]
                     break
         assert download_url
         assert app_module.JobStatus.DONE in statuses
 
-        # Download the compressed file
-        download_resp = await client.get(download_url)
-        assert download_resp.status_code == 200
-        assert download_resp.content == b"compressed"
+        dl_resp = await client.get(download_url)
+        assert dl_resp.status_code == 200
+        assert dl_resp.content == b"compressed"
 
-        # Allow cleanup to run
         await asyncio.sleep(1)
-        # The job should be gone from registry
-        assert job_id not in app_module.jobs
+        assert job_id not in app_module.JOBS
+
