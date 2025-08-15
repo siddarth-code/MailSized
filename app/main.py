@@ -194,6 +194,34 @@ async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
                 yield b": keep-alive\n\n"
                 last_heartbeat = time.time()
 
+# --- Pricing helpers (server-authoritative) ---
+SIZE_TIERS_MB = [500, 1000, 2000]  # ≤500MB, ≤1GB, ≤2GB
+PRICES_BY_PROVIDER = {
+    # indices match tiers above
+    "gmail":   [1.99, 2.99, 4.49],
+    "outlook": [2.19, 3.29, 4.99],
+    "other":   [2.49, 3.99, 5.49],
+}
+UPSSELLS = {"priority": 0.75, "transcript": 1.50}
+TAX_RATE = 0.10
+
+def _tier_index_from_bytes(n_bytes: int) -> int:
+    mb = n_bytes / (1024 * 1024)
+    if mb <= 500: return 0
+    if mb <= 1000: return 1
+    return 2
+
+def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, transcript: bool) -> int:
+    prov = (provider or "gmail").lower()
+    table = PRICES_BY_PROVIDER.get(prov, PRICES_BY_PROVIDER["gmail"])
+    tier_idx = _tier_index_from_bytes(size_bytes)
+    base = float(table[tier_idx])
+    if priority:   base += UPSSELLS["priority"]
+    if transcript: base += UPSSELLS["transcript"]
+    total = base + (base * TAX_RATE)
+    return max(100, int(round(total * 100)))  # at least $1.00 to be safe
+
+
 # ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
@@ -302,34 +330,40 @@ async def checkout(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    # unchanged: _coerce_json_or_form
-    body = body or {}
-
     upload_id = (body.get("upload_id") or "").strip()
-    provider = (body.get("provider") or "gmail").lower()
-    email = (body.get("email") or "").strip()
-    priority = bool(body.get("priority"))
-    transcript = bool(body.get("transcript"))
-    price_cents = int(body.get("price_cents") or 0)
+    provider  = (body.get("provider") or "gmail").lower()
+    email     = (body.get("email") or "").strip()
+    priority  = bool(body.get("priority"))
+    transcript= bool(body.get("transcript"))
 
     if not upload_id or upload_id not in UPLOADS:
         return JSONResponse({"error": "upload not found"}, status_code=404)
-
-    # NEW: enforce email required on server too
     if not email:
         return JSONResponse({"error": "email_required"}, status_code=400)
 
+    # attach selections to upload meta
     u = UPLOADS[upload_id]
-    u.provider = provider
-    u.priority = priority
+    u.provider   = provider
+    u.priority   = priority
     u.transcript = transcript
-    u.email = email  # guaranteed non-empty here
+    u.email      = email
 
+    # compute server-authoritative price (cents)
+    price_cents = compute_order_total_cents(
+        provider=provider,
+        size_bytes=u.size_bytes,
+        priority=priority,
+        transcript=transcript,
+    )
+
+    # generate a job id now (we'll actually start the job in webhook)
     job_id = str(uuid.uuid4())
     JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
 
     if not stripe.api_key:
-        return JSONResponse({"url": f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"})
+        # local / dev behavior
+        fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
+        return JSONResponse({"url": fake_url})
 
     try:
         session = stripe.checkout.Session.create(
@@ -338,7 +372,7 @@ async def checkout(request: Request):
                 "price_data": {
                     "currency": "usd",
                     "product_data": {"name": "MailSized Video Compression"},
-                    "unit_amount": price_cents if price_cents > 0 else 299,
+                    "unit_amount": price_cents,
                 },
                 "quantity": 1,
             }],
@@ -350,6 +384,7 @@ async def checkout(request: Request):
         return JSONResponse({"url": session.url})
     except Exception:
         return JSONResponse({"error": "checkout_create_failed"}, status_code=500)
+
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
