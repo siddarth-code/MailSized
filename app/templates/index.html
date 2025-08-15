@@ -11,6 +11,8 @@
 
   {{ adsense_tag|safe }}
 </head>
+
+<!-- Keep data-paid / data-job-id so the page can resume after Stripe -->
 <body id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id }}">
   <div class="container">
     <header>
@@ -28,11 +30,11 @@
     <div class="card-container">
       <div class="main-card">
         <!-- Steps -->
-        <div class="progress-bar">
-          <div id="step1" class="progress-step active">1. Upload</div>
-          <div id="step2" class="progress-step">2. Payment</div>
-          <div id="step3" class="progress-step">3. Compression</div>
-          <div id="step4" class="progress-step">4. Download</div>
+        <div class="steps">
+          <div id="step1" class="step active">1. Upload</div>
+          <div id="step2" class="step">2. Payment</div>
+          <div id="step3" class="step">3. Compression</div>
+          <div id="step4" class="step">4. Download</div>
         </div>
 
         <!-- Content -->
@@ -48,17 +50,12 @@
             <input type="file" id="fileInput" accept="video/*" style="display:none;">
           </div>
 
-          <!-- Upload progress (NEW) -->
-          <div class="progress-wrapper" id="uploadProgress" style="display:none;margin-top:12px;">
-            <div class="progress-header">
-              <span>Upload</span>
-              <span id="uploadPct">0%</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-fill" id="uploadFill" style="width:0%;"></div>
-            </div>
-            <div class="progress-note" id="uploadNote">Uploading…</div>
+          <!-- Upload progress (matches style.css classes + JS IDs) -->
+          <div class="progress-container" id="uploadProgress" style="display:none; margin-top:12px;">
+            <div class="progress-fill" id="uploadProgressFill" style="width:0%;"></div>
+            <div class="progress-pct" id="uploadProgressPct">0%</div>
           </div>
+          <div class="progress-note" id="uploadNote" style="display:none;">Uploading…</div>
 
           <!-- Selected file details -->
           <div class="file-info" id="fileInfo" style="display:none;">
@@ -118,7 +115,7 @@
           </div>
 
           <div class="email-input">
-            <label for="userEmail">Your email (optional):</label>
+            <label for="userEmail">Email for download link (optional):</label>
             <input type="email" id="userEmail" placeholder="you@example.com">
           </div>
 
@@ -140,24 +137,19 @@
             <i class="fas fa-credit-card"></i> Pay &amp; Compress
           </button>
 
-          <!-- Compression progress + download -->
-          <div id="postPaySection" style="display:none;margin-top:16px;">
-            <div class="progress-wrapper">
-              <div class="progress-header">
-                <span>Compression in progress…</span>
-                <span id="progressPct">0%</span>
-              </div>
-              <div class="progress-track">
-                <div class="progress-fill" id="progressFill" style="width:0%;"></div>
-              </div>
-              <div class="progress-note" id="progressNote">Working…</div>
+          <!-- Post-payment: progress + download -->
+          <div id="postPaySection" style="display:none; margin-top:16px;">
+            <div class="progress-container">
+              <div class="progress-fill" id="progressFill" style="width:0%;"></div>
+              <div class="progress-pct" id="progressPct">0%</div>
             </div>
+            <div class="progress-note" id="progressNote">Working…</div>
 
-            <div id="downloadSection" style="display:none;margin-top:14px;">
+            <div id="downloadSection" style="display:none; margin-top:14px;">
               <a id="downloadLink" class="action-button" href="#" download>
                 <i class="fas fa-download"></i> Download Compressed Video
               </a>
-              <p id="emailNote" style="display:none;margin-top:8px;font-size:0.9rem;color:#4a5568;">
+              <p id="downloadEmailNote" style="display:none; margin-top:8px; font-size:0.9rem; color:#4a5568;">
                 We’ve also emailed your file. Link expires in ~24 hours.
               </p>
             </div>
@@ -165,7 +157,7 @@
         </div>
       </div>
 
-      <!-- Right card: Pricing (UPDATED to size tiers) -->
+      <!-- Right card: Pricing (display only; JS updates the summary figures) -->
       <div class="info-card">
         <h2><i class="fas fa-receipt"></i> Pricing Details (by uploaded size)</h2>
         <table class="pricing-table">
@@ -173,10 +165,9 @@
             <tr><th>File size</th><th>Price</th></tr>
           </thead>
           <tbody>
-            <tr><td>0–250 MB</td><td>$1.99</td></tr>
-            <tr><td>251–750 MB</td><td>$3.99</td></tr>
-            <tr><td>751 MB–1.25 GB</td><td>$5.99</td></tr>
-            <tr><td>1.26–2.00 GB</td><td>$7.99</td></tr>
+            <tr><td>0–500 MB</td><td>$1.99</td></tr>
+            <tr><td>501 MB–1 GB</td><td>$2.99</td></tr>
+            <tr><td>1.01–2 GB</td><td>$4.99</td></tr>
           </tbody>
         </table>
 
@@ -211,7 +202,8 @@
     </div>
   </div>
 
-  <script defer src="/static/script.js?v=2025-08-14-2"></script>
+  <!-- version bump so browsers pull the new JS -->
+  <script defer src="/static/script.js?v=2025-08-14-3"></script>
   <script>
     if (window.adsbygoogle) {
       const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'}];
