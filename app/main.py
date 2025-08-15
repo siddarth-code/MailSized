@@ -17,14 +17,7 @@ from typing import AsyncIterator, Dict, Optional, Tuple
 
 import requests
 import stripe
-from fastapi import (
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    UploadFile,
-)
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,7 +46,7 @@ FFPROBE = str(BIN_DIR / "ffprobe")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],   # tighten to your domains if desired
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,8 +62,21 @@ env = Environment(
     autoescape=select_autoescape(["html", "xml"]),
 )
 
-# ------------ Pricing / capacities ------------
+# ------------ Attachment caps (unchanged) ------------
 PROVIDER_CAP_MB = {"gmail": 25, "outlook": 20, "other": 15}
+
+# ------------ Size-based pricing (NEW server-authoritative) ------------
+# S1: 0–250MB = $1.99, S2: 251–750MB = $3.99, S3: 751MB–1.25GB = $5.99, S4: 1.26–2.00GB = $7.99
+def price_cents_for_size(size_bytes: int) -> int:
+    mb = size_bytes / (1024 * 1024)
+    if mb <= 250:
+        return 199
+    if mb <= 750:
+        return 399
+    if mb <= 1280:  # ~1.25GB
+        return 599
+    # up to 2GB max in UI
+    return 799
 
 @dataclass
 class UploadMeta:
@@ -139,8 +145,8 @@ def choose_target(provider: str, size_bytes: int) -> int:
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     if duration_sec <= 0:
         duration_sec = 120.0
-    total_bits = int(target_bytes * 8 * 0.94)  # 6% mux overhead
-    audio_bps = 80_000  # 80 kbps
+    total_bits = int(target_bytes * 8 * 0.94)  # ~6% container overhead
+    audio_bps = 80_000  # 80 kbps AAC
     video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
     return video_bps, audio_bps
 
@@ -173,7 +179,7 @@ def put(job: JobState, **payload):
     job.q.put_nowait(payload)
 
 async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
-    # immediate state
+    # send immediate state
     yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
     last_heartbeat = time.time()
     while True:
@@ -249,45 +255,45 @@ def index(request: Request):
 # ------------ API ------------
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
-  if not file.filename:
-      raise HTTPException(400, "Missing filename")
-  upload_id = str(uuid.uuid4())
-  temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
+    if not file.filename:
+        raise HTTPException(400, "Missing filename")
+    upload_id = str(uuid.uuid4())
+    temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
 
-  with temp_path.open("wb") as f:
-      while True:
-          chunk = await file.read(1024 * 1024)
-          if not chunk:
-              break
-          f.write(chunk)
+    # save with streaming (front-end shows progress)
+    with temp_path.open("wb") as f:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
 
-  try:
-      duration, width, height = probe_info(str(temp_path))
-  except Exception as e:
-      raise HTTPException(400, f"Probe failed: {e}")
+    try:
+        duration, width, height = probe_info(str(temp_path))
+    except Exception as e:
+        raise HTTPException(400, f"Probe failed: {e}")
 
-  meta = UploadMeta(
-      upload_id=upload_id,
-      src_path=temp_path,
-      size_bytes=temp_path.stat().st_size,
-      duration_sec=duration,
-      width=width,
-      height=height,
-      email=email or None,
-  )
-  UPLOADS[upload_id] = meta
+    meta = UploadMeta(
+        upload_id=upload_id,
+        src_path=temp_path,
+        size_bytes=temp_path.stat().st_size,
+        duration_sec=duration,
+        width=width,
+        height=height,
+        email=email or None,
+    )
+    UPLOADS[upload_id] = meta
 
-  return JSONResponse({
-      "ok": True,
-      "upload_id": upload_id,
-      "duration_sec": duration,
-      "size_bytes": meta.size_bytes,
-      "width": width,
-      "height": height,
-  })
-
-def _coerce_json_or_form(request: Request, body: dict) -> dict:
-    return body or {}
+    # include server-computed price so the UI can show it and we can use it in Stripe
+    return JSONResponse({
+        "ok": True,
+        "upload_id": upload_id,
+        "duration_sec": duration,
+        "size_bytes": meta.size_bytes,
+        "width": width,
+        "height": height,
+        "price_cents": price_cents_for_size(meta.size_bytes),
+    })
 
 @app.post("/checkout")
 async def checkout(request: Request):
@@ -296,14 +302,11 @@ async def checkout(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    body = _coerce_json_or_form(request, body)
-
     upload_id = (body.get("upload_id") or "").strip()
     provider = (body.get("provider") or "gmail").lower()
     email = body.get("email") or None
     priority = bool(body.get("priority"))
     transcript = bool(body.get("transcript"))
-    price_cents = int(body.get("price_cents") or 0)
 
     if not upload_id or upload_id not in UPLOADS:
         return JSONResponse({"error": "upload not found"}, status_code=404)
@@ -318,7 +321,11 @@ async def checkout(request: Request):
     job_id = str(uuid.uuid4())
     JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
 
+    # authoritative price (ignore client for safety)
+    unit_amount = price_cents_for_size(u.size_bytes)
+
     if not stripe.api_key:
+        # local/dev
         return JSONResponse({"url": f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"})
 
     try:
@@ -328,7 +335,7 @@ async def checkout(request: Request):
                 "price_data": {
                     "currency": "usd",
                     "product_data": {"name": "MailSized Video Compression"},
-                    "unit_amount": price_cents if price_cents > 0 else 299,
+                    "unit_amount": unit_amount,
                 },
                 "quantity": 1,
             }],
@@ -350,15 +357,14 @@ async def stripe_webhook(request: Request):
     except Exception:
         data = {}
 
-    event_type = data.get("type") or ""
-    obj = data.get("data", {}).get("object", {}) or {}
-    metadata = obj.get("metadata", {}) or {}
-
-    if event_type != "checkout.session.completed":
+    if data.get("type") != "checkout.session.completed":
         return {"ok": True}
 
+    obj = data.get("data", {}).get("object", {}) or {}
+    metadata = obj.get("metadata", {}) or {}
     upload_id = metadata.get("upload_id")
     job_id = metadata.get("job_id")
+
     if not upload_id or upload_id not in UPLOADS:
         return {"ok": True}
 
@@ -370,7 +376,7 @@ async def stripe_webhook(request: Request):
 
     asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
-    
+
 @app.get("/events/{job_id}")
 async def events(job_id: str):
     job = JOBS.get(job_id)
@@ -382,17 +388,8 @@ async def events(job_id: str):
             message="Unknown job",
         )
         put(dummy, type="state", status="error", progress=0, message="Unknown job")
-        return StreamingResponse(
-            sse_stream(dummy),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"}  
-        )
-
-    return StreamingResponse(
-        sse_stream(job),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache"}     
-    )
+        return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
+    return StreamingResponse(sse_stream(job), media_type="text/event-stream")
 
 @app.get("/download/{job_id}")
 def download(job_id: str):
@@ -473,13 +470,13 @@ async def run_job(job: JobState):
         if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
 
-        # --- Finalize: broadcast URL immediately; email in parallel ---
+        # Finalize: broadcast URL immediately; email in parallel
         job.progress = 100.0
         job.status = "done"
         job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
 
-        # Tell the browser RIGHT NOW
+        # Tell the browser now (ensures on‑page download link appears)
         put(job, type="state", status="done", progress=100.0, message="Complete", download_url=dl_url)
 
         # Email (non-blocking)
