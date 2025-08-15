@@ -7,7 +7,7 @@ This repository contains both the FastAPI backend and the FastHTML/Jinja2 fronte
 ## Features
 
 - ✅ Compress videos up to **2 GB** or **20 minutes** in length
-- ✅ Prices by size tier × provider (Gmail / Outlook / Other).
+- ✅ Prices by size (0–500MB, 501MB–1GB, 1.01–2GB)tier × provider (Gmail / Outlook / Other).
 -   gmail:   [1.99, 2.99, 4.49],
     outlook: [2.19, 3.29, 4.99],
     other:   [2.49, 3.99, 5.49]
