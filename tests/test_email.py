@@ -15,11 +15,16 @@ async def test_send_email_sets_headers(monkeypatch):
     monkeypatch.setenv("EMAIL_PASSWORD", "pass")
     monkeypatch.setenv("SENDER_EMAIL", "contact@mailsized.com")
 
+    monkeypatch.setattr(app_module, "SMTP_HOST", "smtp.example.com", raising=False)
+    monkeypatch.setattr(app_module, "SMTP_PORT", 587, raising=False)
+    monkeypatch.setattr(app_module, "SMTP_USER", "user", raising=False)
+    monkeypatch.setattr(app_module, "SMTP_PASS", "pass", raising=False)
+    monkeypatch.setattr(app_module, "SENDER_EMAIL", "contact@mailsized.com", raising=False)
+
     recorded = {}
 
     class DummySMTP:
-        def __init__(self, host, port):
-            # store host and port for assertions if needed
+        def __init__(self, host, port, *args, **kwargs):
             self.host = host
             self.port = port
 
@@ -49,3 +54,4 @@ async def test_send_email_sets_headers(monkeypatch):
     assert msg["Auto-Submitted"] == "auto-generated"
     assert msg["X-Auto-Response-Suppress"] == "All"
     assert msg["Reply-To"] == "no-reply@mailsized.com"
+
