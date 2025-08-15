@@ -52,8 +52,8 @@
 
           <!-- Upload progress (matches style.css classes + JS IDs) -->
           <div class="progress-container" id="uploadProgress" style="display:none; margin-top:12px;">
-            <div class="progress-fill" id="uploadProgressFill" style="width:0%;"></div>
-            <div class="progress-pct" id="uploadProgressPct">0%</div>
+            <div class="progress-fill" id="uploadFill" style="width:0%;"></div>
+            <div class="progress-pct" id="uploadPct">0%</div>
           </div>
           <div class="progress-note" id="uploadNote" style="display:none;">Uploading…</div>
 
@@ -149,7 +149,7 @@
               <a id="downloadLink" class="action-button" href="#" download>
                 <i class="fas fa-download"></i> Download Compressed Video
               </a>
-              <p id="EmailNote" style="display:none; margin-top:8px; font-size:0.9rem; color:#4a5568;">
+              <p id="emailNote" style="display:none; margin-top:8px; font-size:0.9rem; color:#4a5568;">
                 We’ve also emailed your file. Link expires in ~24 hours.
               </p>
             </div>
@@ -203,7 +203,7 @@
   </div>
 
   <!-- version bump so browsers pull the new JS -->
-  <script defer src="/static/script.js?v=2025-08-14-5"></script>
+  <script defer src="/static/script.js?v=2025-08-14-6"></script>
   <script>
     if (window.adsbygoogle) {
       const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'}];
