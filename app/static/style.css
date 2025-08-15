@@ -190,3 +190,41 @@ a:hover {
 #errorMessage {
   margin: 0;
 }
+
+/* ========= NEW: light additions for size-based pricing and the emailed note ========= */
+
+/* Size‑tier table that matches your clean look */
+.tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  background: #fff;
+}
+
+.tier-table th,
+.tier-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+  font-size: 14px;
+  color: #333;
+}
+
+.tier-table thead th {
+  background: #f4f6f8;
+  font-weight: bold;
+}
+
+/* Subtle muted line for “We’ve also emailed your file…” */
+#emailNote {
+  color: #555;
+  font-size: 14px;
+  margin-top: 8px;
+  display: none; /* shown by JS when done */
+}
+
+/* Optional: disabled look for buttons if you ever need it */
+.button-disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
