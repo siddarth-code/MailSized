@@ -285,7 +285,8 @@ function revealDownload(url){
   const emailNote = $("emailNote"); // id MUST be all lowercase in HTML
   if(!url || !dlLink || !dlSection) return;
   dlLink.href = url;
-  dlSection.style.display = "";
+  // Explicitly override CSS rule (#downloadSection {display:none})
+  dlSection.style.display = "block";
   if(emailNote) emailNote.style.display = "";
   setStep(3);
   setTextSafe($("progressNote"), "Complete");
