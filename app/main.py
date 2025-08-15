@@ -302,32 +302,33 @@ async def checkout(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # unchanged: _coerce_json_or_form
+    body = body or {}
+
     upload_id = (body.get("upload_id") or "").strip()
     provider = (body.get("provider") or "gmail").lower()
     email = (body.get("email") or "").strip()
-    if not email or "@" not in email:
-        return JSONResponse({"error": "email_required"}, status_code=400)
     priority = bool(body.get("priority"))
     transcript = bool(body.get("transcript"))
+    price_cents = int(body.get("price_cents") or 0)
 
     if not upload_id or upload_id not in UPLOADS:
         return JSONResponse({"error": "upload not found"}, status_code=404)
+
+    # NEW: enforce email required on server too
+    if not email:
+        return JSONResponse({"error": "email_required"}, status_code=400)
 
     u = UPLOADS[upload_id]
     u.provider = provider
     u.priority = priority
     u.transcript = transcript
-    if email:
-        u.email = email
+    u.email = email  # guaranteed non-empty here
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = JobState(job_id=job_id, upload=u, status="queued", progress=0.0)
 
-    # authoritative price (ignore client for safety)
-    unit_amount = price_cents_for_size(u.size_bytes)
-
     if not stripe.api_key:
-        # local/dev
         return JSONResponse({"url": f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"})
 
     try:
@@ -337,7 +338,7 @@ async def checkout(request: Request):
                 "price_data": {
                     "currency": "usd",
                     "product_data": {"name": "MailSized Video Compression"},
-                    "unit_amount": unit_amount,
+                    "unit_amount": price_cents if price_cents > 0 else 299,
                 },
                 "quantity": 1,
             }],
