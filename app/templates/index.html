@@ -159,17 +159,39 @@
 
       <!-- Right card: Pricing (display only; JS updates the summary figures) -->
       <div class="info-card">
-        <h2><i class="fas fa-receipt"></i> Pricing Details (by uploaded size)</h2>
-        <table class="pricing-table">
-          <thead>
-            <tr><th>File size</th><th>Price</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>0–500 MB</td><td>$1.99</td></tr>
-            <tr><td>501 MB–1 GB</td><td>$2.99</td></tr>
-            <tr><td>1.01–2 GB</td><td>$4.99</td></tr>
-          </tbody>
-        </table>
+        <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
+        <div class="pricing-table-wrapper">
+          <table class="pricing-table">
+            <thead>
+              <tr>
+                <th>File size</th>
+                <th>Gmail</th>
+                <th>Outlook</th>
+                <th>Other</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>0–500 MB</td>
+                <td>$1.99</td>
+                <td>$2.19</td>
+                <td>$2.49</td>
+              </tr>
+              <tr>
+                <td>501 MB–1 GB</td>
+                <td>$2.99</td>
+                <td>$3.29</td>
+                <td>$3.99</td>
+              </tr>
+              <tr>
+                <td>1.01–2 GB</td>
+                <td>$4.49</td>
+                <td>$4.99</td>
+                <td>$5.49</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- Summary numbers used by JS -->
         <div class="price-summary">
