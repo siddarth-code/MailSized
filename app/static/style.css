@@ -235,15 +235,22 @@ header p{
 .info-card h2{
   margin: 0 0 10px; font-size: 16px; display:flex; align-items:center; gap:8px;
 }
+.pricing-table-wrapper{
+  width:100%;
+  overflow-x:auto;
+}
 .pricing-table{
   width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 10px;
-  border:1px solid var(--border); border-radius: 10px; overflow: hidden;
+  border:1px solid var(--border); border-radius: 10px; overflow: hidden; table-layout: fixed;
 }
 .pricing-table thead th{
-  background: var(--brand-soft); color: var(--brand-700); padding: 8px; border-bottom:1px solid #eadcff;
+  background: var(--brand-soft); color: var(--brand-700); padding: 8px; border-bottom:1px solid #eadcff; text-align:center;
 }
-.pricing-table td{
-  padding: 8px; border-top:1px solid var(--border);
+.pricing-table th, .pricing-table td{
+  padding: 8px; border-top:1px solid var(--border); text-align:center;
+}
+.pricing-table th:first-child, .pricing-table td:first-child{
+  text-align:left;
 }
 .pricing-table tr:nth-child(even) td{ background:#fafaff; }
 
