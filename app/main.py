@@ -304,7 +304,9 @@ async def checkout(request: Request):
         body = {}
     upload_id = (body.get("upload_id") or "").strip()
     provider = (body.get("provider") or "gmail").lower()
-    email = body.get("email") or None
+    email = (body.get("email") or "").strip()
+    if not email or "@" not in email:
+        return JSONResponse({"error": "email_required"}, status_code=400)
     priority = bool(body.get("priority"))
     transcript = bool(body.get("transcript"))
 
