@@ -1,230 +1,268 @@
-/* app/static/style.css */
+/* =========================================================
+   MailSized UI (mockup-aligned theme)
+   Keep existing IDs/classes so current JS keeps working.
+   ========================================================= */
 
 /* ---------- reset & basics ---------- */
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+:root{
+  --bg: #f2f4f8;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --text: #1f2937;
+  --border: #e5e7eb;
+  --brand: #7c3aed;         /* purple primary */
+  --brand-600: #6d28d9;
+  --brand-700: #5b21b6;
+  --brand-soft: #f3e8ff;
+  --success: #28a745;
+  --error-bg: #fde8e8;
+  --error-border: #fca5a5;
+  --error-text: #b91c1c;
+  --shadow: 0 10px 25px rgba(17,24,39,.08);
+  --radius: 14px;
 }
 
+html, body {
+  height: 100%;
+}
 body {
-  font-family: Arial, sans-serif;
   margin: 0;
-  padding: 0;
-  background: #f9f9f9;
-  color: #333;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--text);
+  background: linear-gradient(180deg, #f5f7fb 0%, #eef1f7 100%);
 }
 
-h1, h2, h3, h4, h5 {
-  margin: 0 0 10px;
-}
+/* ---------- links ---------- */
+a { color: var(--brand-600); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
-a {
-  color: #0077cc;
-  text-decoration: none;
-}
-
-a:hover {
-  text-decoration: underline;
-}
-
-/* ---------- layout ---------- */
+/* ---------- container & layout ---------- */
 .container {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 20px;
+  max-width: 1120px;
+  margin: 32px auto;
+  padding: 0 20px 28px;
 }
 
-.hidden {
-  display: none !important;
+.card-container{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+}
+@media (max-width: 980px){
+  .card-container{ grid-template-columns: 1fr; }
 }
 
-/* ---------- steps ---------- */
-.steps {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.steps .step {
-  flex: 1;
+/* ---------- header/logo ---------- */
+header{
   text-align: center;
-  padding: 10px;
-  font-weight: bold;
-  background: #e0e0e0;
-  border-radius: 5px;
-  margin: 0 5px;
-  transition: background 0.3s ease;
+  margin-bottom: 18px;
+}
+.logo{
+  display: inline-flex; align-items: center; gap: 10px;
+  font-weight: 800; font-size: 26px;
+}
+.logo-icon{
+  width: 38px; height: 38px; border-radius: 10px;
+  display:flex; align-items:center; justify-content:center;
+  background: var(--brand-soft); color: var(--brand-600);
+  box-shadow: var(--shadow);
+}
+header p{
+  margin: 6px 0 10px; color: var(--muted); font-size: 14px;
+}
+.constraint{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 999px; font-size: 12px;
+  background: #fff; border: 1px solid var(--border);
 }
 
-.steps .step.active {
-  background: #0077cc;
-  color: #fff;
+/* ---------- cards ---------- */
+.main-card, .info-card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
+.main-card{ padding: 18px; }
+.info-card{ padding: 16px; }
+
+/* ---------- steps (top pills) ---------- */
+.steps{
+  display:flex; gap:6px; padding: 8px; background:#fafbff;
+  border:1px solid var(--border); border-radius: 12px; overflow: hidden;
+  margin-bottom: 12px;
+}
+.steps .step{
+  flex:1; text-align:center; font-weight:600; font-size:12px;
+  padding: 8px 6px; border-radius: 8px; color:#6b6f76;
+}
+.steps .step.active{
+  background: var(--brand-soft); color: var(--brand-700);
+  border: 1px solid #e9d5ff;
+}
+
+/* ---------- section titles ---------- */
+.step-content{ padding: 6px; }
+.step-title{
+  font-size: 16px; margin: 14px 0 10px; display: flex; align-items: center; gap: 8px;
+}
+.step-title i{ color: var(--brand-600); }
 
 /* ---------- upload area ---------- */
-#uploadArea {
-  border: 2px dashed #ccc;
-  padding: 30px;
-  text-align: center;
-  background: #fff;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease;
+.upload-area{
+  border: 2px dashed #d8dbe6;
+  padding: 28px; text-align: center; background: #fff;
+  border-radius: 12px; cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+.upload-area:hover{ border-color: var(--brand-600); box-shadow: var(--shadow); }
+.upload-area.dragover{ border-color: var(--brand); background: #faf5ff; }
+.upload-icon{
+  width: 48px; height: 48px; margin: 0 auto 8px; border-radius: 12px;
+  display:flex; align-items:center; justify-content:center;
+  background: var(--brand-soft); color: var(--brand-600);
 }
 
-#uploadArea.dragover {
-  border-color: #0077cc;
-  background: #f0f8ff;
+/* ---------- upload progress (top of flow) ---------- */
+.progress-container{
+  position: relative; height: 22px; border-radius: 999px;
+  background: #eef2ff; overflow: hidden; border: 1px solid #e5e7eb;
+}
+.progress-fill{
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--brand-600), var(--brand));
+  transition: width .35s ease;
+}
+.progress-pct{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size: 12px; font-weight:700; color:#fff; text-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+.progress-note{ margin-top:6px; color: var(--muted); font-size: 13px; }
+
+/* ---------- file info row ---------- */
+#fileInfo{
+  display:flex; align-items:center; gap:12px; padding:10px 12px; margin-top:12px;
+  background:#fafafa; border:1px solid var(--border); border-radius: 10px;
+}
+.file-icon{
+  width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  background:#eef2ff;color:var(--brand-600);
+}
+.file-name{ font-weight: 700; }
+.file-meta{ font-size: 12px; color: var(--muted); display:flex; gap:10px; }
+.remove-file{
+  margin-left: auto; border: 1px solid var(--border); background:#fff; color:#6b7280;
+  border-radius: 8px; padding:6px 8px; cursor:pointer;
+}
+.remove-file:hover{ background:#f8fafc; }
+
+/* ---------- provider cards ---------- */
+.providers{
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px;
+}
+.providers .provider-card{
+  border:1px solid var(--border); background:#fff; border-radius: 12px;
+  padding: 14px; cursor: pointer; text-align:center;
+  transition: border-color .2s ease, box-shadow .2s ease, transform .05s ease;
+}
+.providers .provider-card:hover{ box-shadow: var(--shadow); }
+.providers .provider-card.selected{
+  border-color: #e9d5ff; box-shadow: 0 0 0 3px #f3e8ff inset;
+}
+.provider-icon{ font-size: 28px; color: var(--brand-600); margin-bottom: 6px; }
+.provider-name{ font-weight: 800; margin-bottom: 4px; }
+.provider-details{ font-size: 12px; color: var(--muted); line-height: 1.25; }
+
+/* ---------- extras ---------- */
+.extras{
+  display: grid; gap:8px;
+}
+.extra-option{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  border:1px solid var(--border); border-radius: 10px; padding:10px 12px; background:#fff;
+}
+.extra-option input{ margin-right:8px; }
+.extra-label{ display:flex; align-items:center; gap:8px; }
+.extra-price{ color:#16a34a; font-weight:700; }
+
+/* ---------- terms/checkbox row ---------- */
+.payment-agreement{
+  margin-top: 8px; font-size: 13px; color: var(--muted);
+}
+.payment-agreement a{ font-weight: 700; }
+
+/* ---------- email field ---------- */
+.email-input{ margin-top: 8px; }
+.email-input label{ display:block; font-size: 13px; margin-bottom:6px; color: var(--muted); }
+.email-input input{
+  width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px;
+  outline: none; font-size:14px; background:#fff;
+}
+.email-input input:focus{
+  border-color: #e9d5ff; box-shadow: 0 0 0 4px #f3e8ff;
 }
 
-#fileInfo {
-  margin-top: 15px;
-  display: none;
+/* ---------- action button ---------- */
+.action-button{
+  width:100%; margin-top: 10px;
+  background: linear-gradient(90deg, var(--brand-600), var(--brand));
+  color:#fff; border:none; border-radius: 12px; padding:12px 14px; font-weight:800;
+  box-shadow: 0 10px 16px rgba(124,58,237,.22);
+  cursor:pointer; transition: transform .05s ease, filter .15s ease;
+  text-align:center; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+}
+.action-button:hover{ filter: brightness(1.02); }
+.action-button:active{ transform: translateY(1px); }
+
+/* ---------- error box ---------- */
+.error-container{
+  display:none; margin-top:10px; padding:10px 12px; border:1px solid var(--error-border);
+  background: var(--error-bg); color: var(--error-text); border-radius: 10px;
+}
+.error-title{ font-weight: 800; display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+
+/* ---------- post-payment progress + download ---------- */
+#postPaySection{ margin-top: 14px; }
+#downloadSection{ display:none; margin-top: 12px; }
+#downloadLink{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 14px; border-radius: 12px; background: var(--success); color:#fff;
+}
+#downloadLink:hover{ filter: brightness(1.02); }
+
+/* ---------- pricing card ---------- */
+.info-card h2{
+  margin: 0 0 10px; font-size: 16px; display:flex; align-items:center; gap:8px;
+}
+.pricing-table{
+  width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 10px;
+  border:1px solid var(--border); border-radius: 10px; overflow: hidden;
+}
+.pricing-table thead th{
+  background: var(--brand-soft); color: var(--brand-700); padding: 8px; border-bottom:1px solid #eadcff;
+}
+.pricing-table td{
+  padding: 8px; border-top:1px solid var(--border);
+}
+.pricing-table tr:nth-child(even) td{ background:#fafaff; }
+
+.price-summary{
+  border:1px solid var(--border); border-radius: 10px; overflow: hidden;
+}
+.price-item, .price-total{
+  display:flex; justify-content:space-between; padding:8px 10px; font-size: 13px; border-top:1px solid var(--border);
+}
+.price-item:first-child{ border-top: none; }
+.price-total{
+  font-weight: 800; background:#fbfbff;
 }
 
-.file-meta {
-  font-size: 14px;
-  margin-top: 5px;
-}
+/* ---------- utilities ---------- */
+.hidden{ display:none !important; }
 
-/* ---------- provider buttons ---------- */
-.providers {
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.providers button {
-  flex: 1;
-  padding: 10px;
-  border: 1px solid #ccc;
-  background: #fff;
-  cursor: pointer;
-  border-radius: 5px;
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.providers button.selected {
-  border-color: #0077cc;
-  background: #e6f2ff;
-}
-
-/* ---------- pricing box ---------- */
-.price-box {
-  background: #fff;
-  padding: 15px;
-  border-radius: 8px;
-  margin-top: 15px;
-  border: 1px solid #ddd;
-}
-
-.price-row {
-  display: flex;
-  justify-content: space-between;
-  margin: 5px 0;
-}
-
-/* ---------- progress bar ---------- */
-.progress-container {
-  background: #eee;
-  border-radius: 20px;
-  overflow: hidden; /* Fix: crops fill within rounded corners */
-  height: 24px;
-  margin-top: 15px;
-  position: relative;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(to right, #0077cc, #00aaff);
-  width: 0%;
-  transition: width 0.3s ease;
-}
-
-.progress-pct {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  line-height: 24px;
-  font-size: 13px;
-  font-weight: bold;
-  color: #fff;
-  text-shadow: 0 0 3px rgba(0,0,0,0.5);
-}
-
-.progress-note {
-  margin-top: 5px;
-  font-size: 14px;
-  color: #555;
-}
-
-/* ---------- download section ---------- */
-#downloadSection {
-  display: none;
-  margin-top: 20px;
-}
-
-#downloadLink {
-  display: inline-block;
-  padding: 10px 15px;
-  background: #28a745;
-  color: #fff;
-  border-radius: 5px;
-}
-
-#downloadLink:hover {
-  background: #218838;
-}
-
-/* ---------- error message ---------- */
-#errorContainer {
-  display: none;
-  background: #fdd;
-  color: #a33;
-  padding: 10px;
-  border: 1px solid #a33;
-  border-radius: 5px;
-  margin-top: 10px;
-}
-
-#errorMessage {
-  margin: 0;
-}
-
-/* ========= NEW: light additions for size-based pricing and the emailed note ========= */
-
-/* Size‑tier table that matches your clean look */
-.tier-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-  background: #fff;
-}
-
-.tier-table th,
-.tier-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #eee;
-  text-align: left;
-  font-size: 14px;
-  color: #333;
-}
-
-.tier-table thead th {
-  background: #f4f6f8;
-  font-weight: bold;
-}
-
-/* Subtle muted line for “We’ve also emailed your file…” */
-#emailNote {
-  color: #555;
-  font-size: 14px;
-  margin-top: 8px;
-  display: none; /* shown by JS when done */
-}
-
-/* Optional: disabled look for buttons if you ever need it */
-.button-disabled {
-  opacity: 0.6;
-  pointer-events: none;
+/* ---------- small tweaks for mobile ---------- */
+@media (max-width: 540px){
+  .providers{ grid-template-columns: 1fr; }
+  .steps{ flex-wrap: wrap; }
 }
