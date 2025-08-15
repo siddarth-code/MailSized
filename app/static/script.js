@@ -114,8 +114,9 @@ function wireUpload(){
 /* progress helpers (IDs must match index.html) */
 function setUploadProgress(pct, note="Uploading…"){
   const box = $("uploadProgress");
-  const fill = $("uploadProgressFill");
-  const pctEl= $("uploadProgressPct");
+  // IDs must mirror index.html (uploadFill/uploadPct)
+  const fill = $("uploadFill");
+  const pctEl= $("uploadPct");
   const noteEl= $("uploadNote");
   if(box) box.style.display="";
   const clamped = Math.max(0, Math.min(100, Math.floor(pct)));
@@ -156,7 +157,7 @@ async function handleFile(file){
 
     // A gentle heartbeat in case some environments emit sparse progress events
     heartbeat = setInterval(()=>{
-      const pctText = $("uploadProgressPct")?.textContent || "0%";
+      const pctText = $("uploadPct")?.textContent || "0%";
       const current = parseInt(pctText, 10) || 0;
       if(current < 95) setUploadProgress(current + 1);
     }, 500);
