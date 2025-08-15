@@ -227,7 +227,7 @@ PRICES_BY_PROVIDER = {
     "outlook": [2.19, 3.29, 4.99],
     "other":   [2.49, 3.99, 5.49],
 }
-UPSSELLS = {"priority": 0.75, "transcript": 1.50}
+UPSELLS = {"priority": 0.75, "transcript": 1.50}
 TAX_RATE = 0.10
 
 def _tier_index_from_bytes(n_bytes: int) -> int:
@@ -241,8 +241,8 @@ def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, tr
     table = PRICES_BY_PROVIDER.get(prov, PRICES_BY_PROVIDER["gmail"])
     tier_idx = _tier_index_from_bytes(size_bytes)
     base = float(table[tier_idx])
-    if priority:   base += UPSSELLS["priority"]
-    if transcript: base += UPSSELLS["transcript"]
+    if priority:   base += UPSELLS["priority"]
+    if transcript: base += UPSELLS["transcript"]
     total = base + (base * TAX_RATE)
     return max(100, int(round(total * 100)))  # at least $1.00 to be safe
 
