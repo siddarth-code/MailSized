@@ -21,11 +21,14 @@
   --error-text: #b91c1c;
   --shadow: 0 10px 25px rgba(17,24,39,.08);
   --radius: 14px;
+
+  /* NEW tokens (non‑breaking) */
+  --focus: rgba(124,58,237,.35);
+  --brand-gradient: linear-gradient(90deg, var(--brand-600), var(--brand));
+  --brand-ring: 0 0 0 4px #f3e8ff;
 }
 
-html, body {
-  height: 100%;
-}
+html, body { height: 100%; }
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
@@ -131,7 +134,7 @@ header p{
 }
 .progress-fill{
   height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--brand-600), var(--brand));
+  background: var(--brand-gradient);
   transition: width .35s ease;
 }
 .progress-pct{
@@ -206,7 +209,7 @@ header p{
 /* ---------- action button ---------- */
 .action-button{
   width:100%; margin-top: 10px;
-  background: linear-gradient(90deg, var(--brand-600), var(--brand));
+  background: var(--brand-gradient);
   color:#fff; border:none; border-radius: 12px; padding:12px 14px; font-weight:800;
   box-shadow: 0 10px 16px rgba(124,58,237,.22);
   cursor:pointer; transition: transform .05s ease, filter .15s ease;
@@ -272,4 +275,93 @@ header p{
 @media (max-width: 540px){
   .providers{ grid-template-columns: 1fr; }
   .steps{ flex-wrap: wrap; }
+}
+
+/* =========================================================
+   Enhancements (non‑breaking) – accessibility, animations,
+   states, and sticky pricing card. All selectors reuse your
+   existing structure so JS keeps working.
+   ========================================================= */
+
+/* Focus-visible rings for clickable widgets */
+.providers .provider-card:focus-visible,
+.upload-area:focus-visible,
+.action-button:focus-visible,
+.remove-file:focus-visible,
+.email-input input:focus-visible{
+  outline: none;
+  box-shadow: var(--brand-ring);
+  border-color: #e9d5ff;
+}
+
+/* Sticky pricing card on desktop */
+@media (min-width: 981px){
+  .info-card{ position: sticky; top: 20px; }
+}
+
+/* Progress “striped” feedback while active (disabled for reduced motion) */
+.progress-container.is-active .progress-fill{
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,.25), rgba(255,255,255,0)),
+    var(--brand-gradient);
+  background-size: 24px 100%, 100% 100%;
+  background-repeat: repeat, no-repeat;
+  animation: ms-stripes 1s linear infinite;
+}
+@keyframes ms-stripes{
+  from{ background-position: 0 0, 0 0; }
+  to  { background-position: 24px 0, 0 0; }
+}
+/* Completed progress state */
+.progress-container.is-complete{
+  border-color: #c7f0d2;
+  background: #e8fff0;
+}
+.progress-container.is-complete .progress-fill{
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+}
+
+/* Disable motion if user prefers reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .progress-fill{ transition: none; animation: none !important; }
+  .action-button{ transition: none; }
+}
+
+/* Button disabled / loading state (you can toggle [disabled]) */
+.action-button[disabled]{
+  opacity: .7;
+  cursor: not-allowed;
+  filter: grayscale(.15);
+}
+
+/* Subtle hover raise on cards/buttons */
+.main-card, .info-card, .providers .provider-card, .upload-area{
+  transition: transform .12s ease, box-shadow .2s ease;
+}
+.providers .provider-card:hover,
+.upload-area:hover{ transform: translateY(-1px); }
+
+/* Required email: show gentle invalid state */
+.email-input input:required:invalid{
+  border-color: #fbcfe8;
+  box-shadow: 0 0 0 3px #fde7f3;
+}
+.email-input input:required:valid{
+  border-color: #bbf7d0;
+  box-shadow: 0 0 0 3px #e9ffe9;
+}
+
+/* Download success note styling */
+#downloadSection .success-note{
+  margin-top: 8px;
+  font-size: 13px;
+  color: #166534; /* deep green */
+}
+
+/* Small helper for screen-reader only text (a11y) */
+.sr-only{
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
