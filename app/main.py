@@ -24,6 +24,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    autoescape=select_autoescape(["html", "xml"]),
+)
+
+
 # ------------ Config / Env ------------
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
@@ -318,6 +324,26 @@ def terms() -> str:
     """Serve the Terms & Conditions page."""
     template = env.get_template("terms.html")
     return template.render()
+
+# ---------- New pages ----------
+@app.get("/how-it-works", response_class=HTMLResponse)
+def how_it_works(request: Request):
+    template = env.get_template("how-it-works.html")
+    adsense_tag = ""
+    if os.environ.get("ENABLE_ADSENSE") == "1":
+        client = os.environ.get("ADSENSE_CLIENT_ID", "")
+        adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
+    return template.render(adsense_tag=adsense_tag)
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy(request: Request):
+    template = env.get_template("privacy.html")
+    adsense_tag = ""
+    if os.environ.get("ENABLE_ADSENSE") == "1":
+        client = os.environ.get("ADSENSE_CLIENT_ID", "")
+        adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
+    return template.render(adsense_tag=adsense_tag)
+
 
 # ------------ API ------------
 @app.post("/upload")
