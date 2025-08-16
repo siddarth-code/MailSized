@@ -27,6 +27,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 # ------------ Config / Env ------------
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "")
+
 
 # Paths (all under /app)
 APP_DIR = Path(__file__).resolve().parent
@@ -283,25 +285,25 @@ SMTP_USER = os.environ.get("EMAIL_USERNAME", "")
 SMTP_PASS = os.environ.get("EMAIL_PASSWORD", "")
 
 
-def send_email_download(to_email: str, download_url: str) -> None:
-    if not to_email:
-        return
-    subject = "Your compressed video is ready"
-    html = f"""
-    <p>Your file has been compressed. You can download it here:</p>
-    <p><a href="{download_url}">{download_url}</a></p>
-    <p>Link expires in ~24 hours.</p>
+def send_contact_message(from_email: str, subject: str, body: str) -> None:
     """
+    Server-side only: forwards contact form to the site owner.
+    Uses Mailgun if available, otherwise SMTP. OWNER_EMAIL must be set.
+    """
+    if not OWNER_EMAIL:
+        return  # silently no-op if owner email not configured
+
+    # Prefer Mailgun if configured
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
                 f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
                 auth=("api", MAILGUN_KEY),
                 data={
-                    "from": f"MailSized <{SENDER_EMAIL}>",
-                    "to": [to_email],
-                    "subject": subject,
-                    "html": html,
+                    "from": f"MailSized Contact <{SENDER_EMAIL or 'no-reply@mailsized.com'}>",
+                    "to": [OWNER_EMAIL],
+                    "subject": f"[MailSized Contact] {subject}",
+                    "text": f"From: {from_email}\n\n{body}",
                 },
                 timeout=10,
             )
@@ -309,23 +311,22 @@ def send_email_download(to_email: str, download_url: str) -> None:
             return
         except Exception:
             pass
+
+    # SMTP fallback
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
-            msg["From"] = SENDER_EMAIL
-            msg["To"] = to_email
-            msg["Subject"] = subject
-            msg["Auto-Submitted"] = "auto-generated"
-            msg["X-Auto-Response-Suppress"] = "All"
-            msg["Reply-To"] = "no-reply@mailsized.com"
-            msg.set_content(html, subtype="html")
+            msg["From"] = SENDER_EMAIL or "no-reply@mailsized.com"
+            msg["To"] = OWNER_EMAIL
+            msg["Subject"] = f"[MailSized Contact] {subject}"
+            msg.set_content(f"From: {from_email}\n\n{body}")
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
                 s.starttls()
                 s.login(SMTP_USER, SMTP_PASS)
                 s.send_message(msg)
-            return
         except Exception:
             return
+
 
 
 async def send_email(to_email: str, download_url: str) -> None:
@@ -373,6 +374,33 @@ def privacy(request: Request):
         adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
     return template.render(adsense_tag=adsense_tag)
 
+from fastapi.responses import RedirectResponse
+
+@app.get("/contact", response_class=HTMLResponse)
+def contact_get(request: Request):
+    template = env.get_template("contact.html")
+    sent = request.query_params.get("sent") == "1"
+    return template.render(sent=sent)
+
+from fastapi import Form
+
+@app.post("/contact")
+async def contact_post(
+    user_email: str = Form(...),
+    subject: str = Form(...),
+    message: str = Form(...),
+):
+    # Basic validation
+    if not user_email or "@" not in user_email:
+        raise HTTPException(status_code=400, detail="Valid email required.")
+    if not subject.strip() or not message.strip():
+        raise HTTPException(status_code=400, detail="Subject and message are required.")
+
+    # Send server-side (owner email never exposed)
+    send_contact_message(user_email.strip(), subject.strip(), message.strip())
+
+    # PRG pattern: redirect to avoid resubmits
+    return RedirectResponse(url="/contact?sent=1", status_code=303)
 
 # ------------ API ------------
 @app.post("/upload")
