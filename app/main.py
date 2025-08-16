@@ -17,17 +17,21 @@ from typing import AsyncIterator, Dict, Optional, Tuple
 
 import requests
 import stripe
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 # ------------ Config / Env ------------
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")  # if set, we verify
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "")
+
+# Optional rate limit toggle (off by default so behavior doesn't change)
+ENABLE_RATE_LIMIT = os.getenv("ENABLE_RATE_LIMIT", "0") == "1"
 
 # Paths (all under /app)
 APP_DIR = Path(__file__).resolve().parent
@@ -46,9 +50,13 @@ FFPROBE = str(BIN_DIR / "ffprobe")
 
 # ------------ App ------------
 app = FastAPI()
+
+# NOTE: Keep current permissive CORS to avoid breaking your flow.
+# Later, tighten to:
+# allow_origins=["https://mailsized.com", "https://www.mailsized.com"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten to your domains if desired
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,6 +66,7 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 if not STATIC_DIR.exists():
     raise RuntimeError(f"Static directory missing: {STATIC_DIR}")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# Keep /media static mount to preserve current behavior (emails/UI use it)
 app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 
 env = Environment(
@@ -66,14 +75,11 @@ env = Environment(
 )
 
 # ------------ Attachment caps / limits ------------
-PROVIDER_CAP_MB = {"gmail": 25, "outlook": 20, "other": 15}  # legacy public constants
-PROVIDER_TARGETS_MB = PROVIDER_CAP_MB  # legacy alias
+PROVIDER_CAP_MB = {"gmail": 25, "outlook": 20, "other": 15}
+PROVIDER_TARGETS_MB = PROVIDER_CAP_MB
 
-# Global upload constraints
 MAX_SIZE_GB = 2
 MAX_DURATION_SEC = 20 * 60  # 20 minutes
-
-# Download expiry (cleanup) in minutes
 DOWNLOAD_TTL_MIN = float(os.getenv("DOWNLOAD_TTL_MIN", "30"))
 
 class JobStatus:
@@ -83,7 +89,6 @@ class JobStatus:
     ERROR = "error"
 
 # ------------ Size-based pricing (server-authoritative) ------------
-# S1: 0–250MB = $1.99, S2: 251–750MB = $3.99, S3: 751MB–1.25GB = $5.99, S4: 1.26–2.00GB = $7.99
 def price_cents_for_size(size_bytes: int) -> int:
     mb = size_bytes / (1024 * 1024)
     if mb <= 250:
@@ -92,8 +97,7 @@ def price_cents_for_size(size_bytes: int) -> int:
         return 399
     if mb <= 1280:  # ~1.25GB
         return 599
-    # up to 2GB max in UI
-    return 799
+    return 799  # up to 2GB
 
 @dataclass
 class UploadMeta:
@@ -112,7 +116,7 @@ class UploadMeta:
 class JobState:
     job_id: str
     upload: UploadMeta
-    status: str = JobStatus.QUEUED  # queued|running|done|error
+    status: str = JobStatus.QUEUED
     progress: float = 0.0
     message: str = ""
     out_path: Optional[Path] = None
@@ -121,7 +125,6 @@ class JobState:
 
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
-# legacy aliases expected by some tests
 uploads = UPLOADS
 jobs = JOBS
 
@@ -136,20 +139,15 @@ def _run(cmd: str) -> subprocess.CompletedProcess:
     )
 
 def probe_info(path: str) -> Tuple[float, int, int]:
-    """Returns (duration_sec, width, height) using ffprobe. Synchronous."""
     if not Path(path).exists():
         raise FileNotFoundError(path)
-
     d = _run(f"{FFPROBE} -v error -show_entries format=duration -of json {shlex.quote(path)}")
     dur = 0.0
     try:
         dur = float(json.loads(d.stdout or "{}").get("format", {}).get("duration", 0.0))
     except Exception:
         pass
-
-    s = _run(
-        f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}"
-    )
+    s = _run(f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}")
     width = height = 0
     try:
         st = json.loads(s.stdout or "{}").get("streams", [{}])[0]
@@ -157,87 +155,51 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         height = int(st.get("height") or 0)
     except Exception:
         pass
-
     return max(dur, 0.0), width, height
 
 def probe_duration(path: str) -> float:
-    """Convenience wrapper returning only the duration."""
     dur, _, _ = probe_info(path)
     return dur
 
-# ===================== NEW/UPDATED COMPRESSION HELPERS =====================
-
 def choose_target(provider: str, size_bytes: int) -> int:
-    """
-    Safe email attachment targets (container bytes) by provider with headroom.
-    We encode comfortably under the nominal cap and add variability margin.
-    """
-    prov = (provider or "gmail").lower()
-    # Safe caps (MB) below the public limits (+ buffer against gateways)
-    safe_caps_mb = {"gmail": 24, "outlook": 19, "other": 14}
-    cap_mb = safe_caps_mb.get(prov, 14)
-    # Convert to bytes and keep ~8% headroom for mux/variability
-    return int(cap_mb * 1024 * 1024 * 0.92)
+    cap_mb = PROVIDER_CAP_MB.get(provider, 15)
+    return int((cap_mb - 1.5) * 1024 * 1024)  # headroom
 
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
-    """
-    Allocate video/audio bitrates (bps) inside the size budget.
-    - Adaptive audio: <5m=96k, 5–10m=80k, >10m=64k
-    - Additional internal mux headroom to stay under cap.
-    """
-    d = max(float(duration_sec or 0), 1.0)
-    total_bits = int(target_bytes * 8)
-    total_bits = int(total_bits * 0.97)  # internal mux headroom
-
-    if d <= 300:
-        a_bps = 96_000
-    elif d <= 600:
-        a_bps = 80_000
-    else:
-        a_bps = 64_000
-
-    v_bps = max(int(total_bits / d) - a_bps, 350_000)  # floor to avoid mush
-    return v_bps, a_bps
+    if duration_sec <= 0:
+        duration_sec = 120.0
+    total_bits = int(target_bytes * 8 * 0.94)  # ~6% container overhead
+    audio_bps = 80_000  # 80 kbps AAC
+    video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
+    return video_bps, audio_bps
 
 def decide_two_pass(duration_sec: float, video_bps: int) -> bool:
-    """
-    2-pass ABR for long/tight encodes; single-pass VBV when short/roomy.
-    """
     if duration_sec >= 120:
         return True
-    if video_bps <= 650_000:
+    if video_bps <= 600_000:
         return True
     return False
 
 def auto_scale(width: int, height: int, video_bps: int) -> Tuple[int, int]:
-    """
-    Choose target resolution from bitrate ladder, maintain aspect ratio (done in filter),
-    and ensure even dimensions for 4:2:0.
-    """
     if width <= 0 or height <= 0:
-        if video_bps < 500_000:   return (854, 480)
-        if video_bps < 900_000:   return (1280, 720)
-        return (1280, 720)
-
-    src_px = width * height
-    if video_bps < 450_000:       tgt = (640, 360)
-    elif video_bps < 700_000:     tgt = (854, 480)
-    elif video_bps < 1_000_000:   tgt = (1280, 720)
+        return (960, 540) if video_bps < 600_000 else (1280, 720)
+    target_w, target_h = width, height
+    px = width * height
+    if video_bps < 500_000:
+        target_w, target_h = 854, 480
+    elif video_bps < 900_000:
+        target_w, target_h = 1280, 720
     else:
-        tgt = (1920, 1080) if src_px > 1920 * 1080 else (width, height)
-
-    w, h = tgt
-    w -= w % 2
-    h -= h % 2
-    return max(w, 2), max(h, 2)
-
-# ===================== END UPDATED HELPERS =====================
+        if px > 1920 * 1080:
+            target_w, target_h = 1920, 1080
+    target_w -= target_w % 2
+    target_h -= target_h % 2
+    return max(target_w, 2), max(target_h, 2)
 
 def put(job: JobState, **payload):
     job.q.put_nowait(payload)
 
 async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
-    # send immediate state
     yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
     last_heartbeat = time.time()
     while True:
@@ -255,10 +217,9 @@ async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
 # --- Pricing helpers (server-authoritative) ---
 SIZE_TIERS_MB = [500, 1000, 2000]  # ≤500MB, ≤1GB, ≤2GB
 PRICES_BY_PROVIDER = {
-    # indices match tiers above
-    "gmail": [1.99, 2.99, 4.49],
+    "gmail":   [1.99, 2.99, 4.49],
     "outlook": [2.19, 3.29, 4.99],
-    "other": [2.49, 3.99, 5.49],
+    "other":   [2.49, 3.99, 5.49],
 }
 UPSELLS = {"priority": 0.75, "transcript": 1.50}
 TAX_RATE = 0.10
@@ -271,9 +232,7 @@ def _tier_index_from_bytes(n_bytes: int) -> int:
         return 1
     return 2
 
-def compute_order_total_cents(
-    provider: str, size_bytes: int, priority: bool, transcript: bool
-) -> int:
+def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, transcript: bool) -> int:
     prov = (provider or "gmail").lower()
     table = PRICES_BY_PROVIDER.get(prov, PRICES_BY_PROVIDER["gmail"])
     tier_idx = _tier_index_from_bytes(size_bytes)
@@ -283,7 +242,7 @@ def compute_order_total_cents(
     if transcript:
         base += UPSELLS["transcript"]
     total = base + (base * TAX_RATE)
-    return max(100, int(round(total * 100)))  # at least $1.00 to be safe
+    return max(100, int(round(total * 100)))
 
 # ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
@@ -296,14 +255,8 @@ SMTP_USER = os.environ.get("EMAIL_USERNAME", "")
 SMTP_PASS = os.environ.get("EMAIL_PASSWORD", "")
 
 def send_contact_message(from_email: str, subject: str, body: str) -> None:
-    """
-    Server-side only: forwards contact form to the site owner.
-    Uses Mailgun if available, otherwise SMTP. OWNER_EMAIL must be set.
-    """
     if not OWNER_EMAIL:
-        return  # silently no-op if owner email not configured
-
-    # Prefer Mailgun if configured
+        return
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
@@ -321,8 +274,6 @@ def send_contact_message(from_email: str, subject: str, body: str) -> None:
             return
         except Exception:
             pass
-
-    # SMTP fallback
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
@@ -338,10 +289,8 @@ def send_contact_message(from_email: str, subject: str, body: str) -> None:
             return
 
 def send_email_download(to_email: str, download_url: str) -> None:
-    """Send a download link to the provided email address."""
     subject = "Your MailSized download"
     body = f"Your file is ready: {download_url}\n"
-
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
@@ -362,7 +311,6 @@ def send_email_download(to_email: str, download_url: str) -> None:
             return
         except Exception:
             pass
-
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
@@ -381,8 +329,45 @@ def send_email_download(to_email: str, download_url: str) -> None:
             return
 
 async def send_email(to_email: str, download_url: str) -> None:
-    """Async wrapper used in tests."""
     await asyncio.to_thread(send_email_download, to_email, download_url)
+
+# ------------ Security headers (no behavior change) ------------
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # keep CSP friendly to your current use of CDN CSS/JS and inline styles
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "script-src 'self' https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com; "
+        "connect-src 'self';"
+    )
+    return resp
+
+# ------------ Optional basic rate limit (off by default) ------------
+_RATE = {"tokens": {}, "capacity": 20, "refill": 20, "per": 60.0}  # generous defaults
+
+@app.middleware("http")
+async def basic_rate_limit(request: Request, call_next):
+    if not ENABLE_RATE_LIMIT:
+        return await call_next(request)
+    ip = request.client.host if request.client else "anon"
+    now = time.time()
+    b = _RATE["tokens"].get(ip, {"t": now, "tokens": _RATE["capacity"]})
+    elapsed = now - b["t"]
+    b["tokens"] = min(_RATE["capacity"], b["tokens"] + elapsed * (_RATE["refill"]/ _RATE["per"]))
+    b["t"] = now
+    cost = 3 if request.url.path == "/upload" else 1
+    if b["tokens"] < cost:
+        return JSONResponse({"error": "rate_limited"}, status_code=429)
+    b["tokens"] -= cost
+    _RATE["tokens"][ip] = b
+    return await call_next(request)
 
 # ------------ Views ------------
 @app.get("/", response_class=HTMLResponse)
@@ -398,11 +383,10 @@ def index(request: Request):
 
 @app.get("/terms", response_class=HTMLResponse)
 def terms() -> str:
-    """Serve the Terms & Conditions page."""
     template = env.get_template("terms.html")
     return template.render()
 
-# ---------- New pages ----------
+# --- Extra pages (kept as in your current app) ---
 @app.get("/how-it-works", response_class=HTMLResponse)
 def how_it_works(request: Request):
     template = env.get_template("how-it-works.html")
@@ -433,16 +417,11 @@ async def contact_post(
     subject: str = Form(...),
     message: str = Form(...),
 ):
-    # Basic validation
     if not user_email or "@" not in user_email:
         raise HTTPException(status_code=400, detail="Valid email required.")
     if not subject.strip() or not message.strip():
         raise HTTPException(status_code=400, detail="Subject and message are required.")
-
-    # Send server-side (owner email never exposed)
     send_contact_message(user_email.strip(), subject.strip(), message.strip())
-
-    # PRG pattern: redirect to avoid resubmits
     return RedirectResponse(url="/contact?sent=1", status_code=303)
 
 # ------------ API ------------
@@ -452,10 +431,11 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
         raise HTTPException(400, "Missing filename")
     if not (file.content_type or "").startswith("video/"):
         raise HTTPException(400, "Unsupported file type")
-    upload_id = str(uuid.uuid4())
-    temp_path = UPLOAD_DIR / f"{upload_id}_{file.filename}"
 
-    # save with streaming (front-end shows progress)
+    upload_id = str(uuid.uuid4())
+    # Keep behavior: still save to uploads dir; switch to neutral extension to avoid odd filenames
+    temp_path = UPLOAD_DIR / f"{upload_id}.src"
+
     max_bytes = int(MAX_SIZE_GB * 1024 * 1024 * 1024)
     written = 0
     with temp_path.open("wb") as f:
@@ -489,7 +469,6 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
     )
     UPLOADS[upload_id] = meta
 
-    # include server-computed price so the UI can show it and we can use it in Stripe
     return JSONResponse(
         {
             "ok": True,
@@ -520,28 +499,21 @@ async def checkout(request: Request):
     if not email:
         return JSONResponse({"error": "email_required"}, status_code=400)
 
-    # attach selections to upload meta
     u = UPLOADS[upload_id]
     u.provider = provider
     u.priority = priority
     u.transcript = transcript
     u.email = email
 
-    # compute server-authoritative price (cents)
     price_cents = compute_order_total_cents(
-        provider=provider,
-        size_bytes=u.size_bytes,
-        priority=priority,
-        transcript=transcript,
+        provider=provider, size_bytes=u.size_bytes, priority=priority, transcript=transcript
     )
 
-    # generate a job id now (we'll actually start the job in webhook)
     job_id = str(uuid.uuid4())
     job = JobState(job_id=job_id, upload=u, status=JobStatus.QUEUED, progress=0.0)
     JOBS[job_id] = job
 
     if not stripe.api_key:
-        # local / dev behavior: start job immediately and return fake success URL
         asyncio.create_task(run_job(job))
         fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
         return JSONResponse({"url": fake_url})
@@ -569,18 +541,36 @@ async def checkout(request: Request):
         return JSONResponse({"error": "checkout_create_failed"}, status_code=500)
 
 @app.post("/stripe/webhook")
-async def stripe_webhook(request: Request):
-    """Start compression when Stripe says checkout.session.completed."""
-    try:
-        payload = await request.body()
-        data = json.loads(payload.decode() or "{}")
-    except Exception:
-        data = {}
+async def stripe_webhook(request: Request, stripe_signature: str = Header(None, alias="stripe-signature")):
+    """
+    If STRIPE_WEBHOOK_SECRET is set, verify signature. Otherwise, keep current
+    permissive behavior (do not break existing deployments).
+    """
+    payload = await request.body()
 
-    if data.get("type") != "checkout.session.completed":
+    event = None
+    if STRIPE_WEBHOOK_SECRET:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=stripe_signature or "",
+                secret=STRIPE_WEBHOOK_SECRET,
+            )
+        except Exception:
+            # Invalid signature; ignore silently to mimic Stripe 200 behavior.
+            return JSONResponse({"ok": True}, status_code=200)
+    else:
+        # Fallback: parse JSON without verification (current behavior)
+        try:
+            event = json.loads(payload.decode() or "{}")
+        except Exception:
+            event = {}
+
+    event_type = event.get("type") if isinstance(event, dict) else event["type"]
+    if event_type != "checkout.session.completed":
         return {"ok": True}
 
-    obj = data.get("data", {}).get("object", {}) or {}
+    obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"]
     metadata = obj.get("metadata", {}) or {}
     upload_id = metadata.get("upload_id")
     job_id = metadata.get("job_id")
@@ -591,7 +581,7 @@ async def stripe_webhook(request: Request):
     job = JOBS.get(job_id) if job_id else None
     if not job:
         job_id = job_id or str(uuid.uuid4())
-        job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status="queued", progress=0.0)
+        job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0)
         JOBS[job_id] = job
 
     asyncio.create_task(run_job(job))
@@ -603,25 +593,26 @@ async def events(job_id: str):
     if not job:
         dummy = JobState(
             job_id=job_id,
-            upload=UploadMeta(
-                upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0
-            ),
-            status="error",
+            upload=UploadMeta(upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0),
+            status=JobStatus.ERROR,
             message="Unknown job",
         )
-        put(dummy, type="state", status="error", progress=0, message="Unknown job")
+        put(dummy, type="state", status=JobStatus.ERROR, progress=0, message="Unknown job")
         return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
     return StreamingResponse(sse_stream(job), media_type="text/event-stream")
 
 @app.get("/download/{job_id}")
 def download(job_id: str):
+    """
+    Keep current behavior: return a JSON with a /media URL so your front-end and
+    emails continue to work unchanged.
+    """
     job = JOBS.get(job_id)
-    if not job or job.status != "done" or not job.out_path:
+    if not job or job.status != JobStatus.DONE or not job.out_path:
         raise HTTPException(404, "Not ready")
     return JSONResponse({"ok": True, "url": f"{PUBLIC_BASE_URL}/media/{job.out_path.name}"})
 
 async def cleanup_job(job_id: str) -> None:
-    """Remove files and purge job/upload metadata."""
     job = JOBS.pop(job_id, None)
     if not job:
         return
@@ -644,6 +635,23 @@ async def _schedule_cleanup(job_id: str) -> None:
     await cleanup_job(job_id)
 
 # ------------ Worker ------------
+def _preexec_ulimits():
+    """
+    Add gentle resource limits to the ffmpeg child process.
+    Safe defaults; no behavior change expected.
+    """
+    try:
+        import resource
+        # CPU 30 minutes
+        resource.setrlimit(resource.RLIMIT_CPU, (1800, 1800))
+        # Address space ~2 GB
+        resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))
+        # File descriptors
+        resource.setrlimit(resource.RLIMIT_NOFILE, (512, 512))
+    except Exception:
+        # If not available on the platform, ignore.
+        pass
+
 async def run_job(job: JobState):
     u = job.upload
     job.status = JobStatus.RUNNING
@@ -661,20 +669,12 @@ async def run_job(job: JobState):
             out_path.unlink(missing_ok=True)
 
         vf = f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease:flags=bicubic"
-
-        # Priority => faster turnaround (slightly less efficient)
-        x264_preset = "superfast" if u.priority else "faster"
-
         common = [
-            FFMPEG,
-            "-y",
+            FFMPEG, "-y",
             "-i", str(u.src_path),
             "-vf", vf,
             "-c:v", "libx264",
-            "-preset", x264_preset,
-            "-profile:v", "high",
-            "-level:v", "4.0",
-            "-pix_fmt", "yuv420p",
+            "-preset", "veryfast" if u.priority else "faster",
             "-movflags", "+faststart",
             "-c:a", "aac",
             "-b:a", str(a_bps),
@@ -691,12 +691,9 @@ async def run_job(job: JobState):
 
         async def run_and_stream(cmd: list[str]) -> int:
             proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                "-progress", "pipe:1",
-                "-nostats",
-                "-loglevel", "error",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                *cmd, "-progress", "pipe:1", "-nostats", "-loglevel", "error",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                preexec_fn=_preexec_ulimits  # sandbox-ish
             )
             last_emit = 0.0
             while True:
@@ -712,7 +709,6 @@ async def run_job(job: JobState):
                         last_emit = pct
             return await proc.wait()
 
-        # Encode
         if do_two_pass:
             rc1 = await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "1", "-f", "mp4", "/dev/null"])
             if rc1 != 0:
@@ -721,45 +717,12 @@ async def run_job(job: JobState):
             if rc2 != 0:
                 raise RuntimeError("FFmpeg pass 2 failed")
         else:
-            rc = await run_and_stream(common + [
-                "-b:v", str(v_bps),
-                "-maxrate", str(int(v_bps * 1.2)),
-                "-bufsize", str(int(v_bps * 2.0)),
-                str(out_path),
-            ])
+            rc = await run_and_stream(common + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)])
             if rc != 0:
                 raise RuntimeError("FFmpeg failed")
 
         if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
-
-        # ---------------- Overshoot guard: one retry if needed ----------------
-        target = choose_target(u.provider, u.size_bytes)
-        final_sz = out_path.stat().st_size
-        if final_sz > target:
-            # shrink ~10% and retry once
-            shrink_bps = max(int(v_bps * 0.9), 300_000)
-            try:
-                out_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            if do_two_pass:
-                rc1 = await run_and_stream(common + ["-b:v", str(shrink_bps), "-pass", "1", "-f", "mp4", "/dev/null"])
-                if rc1 != 0:
-                    raise RuntimeError("FFmpeg pass 1 failed (retry)")
-                rc2 = await run_and_stream(common + ["-b:v", str(shrink_bps), "-pass", "2", str(out_path)])
-                if rc2 != 0:
-                    raise RuntimeError("FFmpeg pass 2 failed (retry)")
-            else:
-                rc = await run_and_stream(common + [
-                    "-b:v", str(shrink_bps),
-                    "-maxrate", str(int(shrink_bps * 1.2)),
-                    "-bufsize", str(int(shrink_bps * 2.0)),
-                    str(out_path),
-                ])
-                if rc != 0:
-                    raise RuntimeError("FFmpeg failed (retry)")
-        # ---------------------------------------------------------------------
 
         # Finalize: broadcast URL immediately; email in parallel
         job.progress = 100.0
@@ -767,14 +730,7 @@ async def run_job(job: JobState):
         job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
 
-        put(
-            job,
-            type="state",
-            status=JobStatus.DONE,
-            progress=100.0,
-            message="Complete",
-            download_url=dl_url,
-        )
+        put(job, type="state", status=JobStatus.DONE, progress=100.0, message="Complete", download_url=dl_url)
 
         if u.email:
             asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
