@@ -72,6 +72,20 @@
       </aside>
     </div>
   </div>
-
+<script>
+    if (window.adsbygoogle) {
+      const el = document.getElementById('ad-slot-howitworks');
+      if (el){
+        const ins = document.createElement('ins');
+        ins.className = 'adsbygoogle';
+        ins.style.display = 'block';
+        ins.setAttribute('data-ad-client', '{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot', 'sidebar-300x250');
+        ins.setAttribute('data-full-width-responsive', 'true');
+        el.innerHTML = ''; el.appendChild(ins);
+        (adsbygoogle = window.adsbygoogle || []).push({});
+      }
+    }
+  </script>
 </body>
 </html>
