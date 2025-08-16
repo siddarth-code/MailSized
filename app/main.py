@@ -328,6 +328,54 @@ def send_contact_message(from_email: str, subject: str, body: str) -> None:
             return
 
 
+def send_email_download(to_email: str, download_url: str) -> None:
+    """Send a download link to the provided email address.
+
+    Tries Mailgun first if configured, otherwise falls back to SMTP. The
+    message includes headers to suppress auto responses.
+    """
+
+    subject = "Your MailSized download"
+    body = f"Your file is ready: {download_url}\n"
+
+    if MAILGUN_KEY and MAILGUN_DOMAIN:
+        try:
+            r = requests.post(
+                f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+                auth=("api", MAILGUN_KEY),
+                data={
+                    "from": SENDER_EMAIL or "no-reply@mailsized.com",
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": body,
+                    "h:Auto-Submitted": "auto-generated",
+                    "h:X-Auto-Response-Suppress": "All",
+                    "h:Reply-To": "no-reply@mailsized.com",
+                },
+                timeout=10,
+            )
+            r.raise_for_status()
+            return
+        except Exception:
+            pass
+
+    if SMTP_HOST and SMTP_USER and SMTP_PASS:
+        try:
+            msg = EmailMessage()
+            msg["From"] = SENDER_EMAIL or "no-reply@mailsized.com"
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            msg["Auto-Submitted"] = "auto-generated"
+            msg["X-Auto-Response-Suppress"] = "All"
+            msg["Reply-To"] = "no-reply@mailsized.com"
+            msg.set_content(body)
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        except Exception:
+            return
+
 
 async def send_email(to_email: str, download_url: str) -> None:
     """Async wrapper used in tests."""
