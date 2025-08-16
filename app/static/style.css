@@ -80,6 +80,26 @@ header p{
   background: #fff; border: 1px solid var(--border);
 }
 
+/* ---------- top navigation ---------- */
+.top-nav{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:flex-start;
+  margin:8px 0 12px;
+  font-size:13px;
+  color:var(--muted);
+}
+.top-nav .top-nav-link{
+  color:var(--brand-600);
+  font-weight:700;
+  text-decoration:none;
+}
+.top-nav .top-nav-link:hover{
+  text-decoration:underline;
+}
+.top-nav .sep{ color:#c7c9d3; }
+
 /* ---------- cards ---------- */
 .main-card, .info-card{
   background: var(--card);
