@@ -16,6 +16,7 @@
   <meta property="og:url" content="{{ PUBLIC_BASE_URL | default('https://mailsized.com') }}/how-it-works"/>
 
   <!-- Styles -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
 
   <!-- Structured data: Article + FAQPage -->
@@ -60,14 +61,6 @@
 <body>
   <div class="container">
 
-    <!-- Minimal top nav (inherits your styles; simple, left-aligned) -->
-    <nav class="top-nav" style="margin: 8px 0 10px;">
-      <a href="/" style="margin-right:16px;">Home</a>
-      <strong style="margin-right:16px;">How it Works</strong>
-      <a href="/blog" style="margin-right:16px;">Blogs</a>
-      <a href="/privacy">Privacy</a>
-    </nav>
-
     <header>
       <div class="logo">
         <div class="logo-icon"><i class="fas fa-video"></i></div>
@@ -79,6 +72,15 @@
         <div class="constraint"><i class="fas fa-check-circle"></i><span>Email-ready sizes</span></div>
         <div class="constraint"><i class="fas fa-bolt"></i><span>Fast turnaround</span></div>
       </div>
+      <nav class="top-nav" aria-label="Main">
+        <a href="/" class="top-nav-link">Home</a>
+        <span class="sep">|</span>
+        <a href="/how-it-works" class="top-nav-link">How it Works</a>
+        <span class="sep">|</span>
+        <a href="/privacy" class="top-nav-link">Privacy</a>
+        <span class="sep">|</span>
+        <a href="/contact" class="top-nav-link">Contact Us</a>
+      </nav>
     </header>
 
     <div class="card-container">
@@ -179,9 +181,6 @@
       </aside>
     </div>
   </div>
-
-  <!-- Icons (font awesome) – optional if already loaded on main -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 
   <!-- Optional: load ads if configured -->
   <script>
