@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Cache-Control" content="no-store"/>
+  <title>Contact Us – MailSized</title>
+  <meta name="description" content="Contact MailSized. Get support, ask questions, or share feedback."/>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <div class="container">
+    <!-- Top nav -->
+    <nav class="top-nav">
+      <a href="/">Home</a>
+      <a href="/how-it-works">How it Works</a>
+      <a href="/privacy">Privacy</a>
+      <strong>Contact Us</strong>
+    </nav>
+
+    <header>
+      <div class="logo">
+        <div class="logo-icon"><i class="fas fa-video"></i></div>
+        <h1>Contact Us</h1>
+      </div>
+      <p>We’d love to hear from you—support, feedback, or questions.</p>
+    </header>
+
+    <div class="card-container">
+      <div class="main-card">
+        {% if sent %}
+          <div class="success-box" role="status" aria-live="polite">
+            <strong>Thanks!</strong> Your message has been sent. We’ll get back to you soon.
+          </div>
+        {% endif %}
+
+        <form method="post" action="/contact" class="contact-form" novalidate>
+          <div class="form-row">
+            <label for="user_email">Your Email</label>
+            <input type="email" id="user_email" name="user_email" placeholder="you@example.com" required />
+          </div>
+
+          <div class="form-row">
+            <label for="subject">Subject</label>
+            <input type="text" id="subject" name="subject" placeholder="How can we help?" required />
+          </div>
+
+          <div class="form-row">
+            <label for="message">Message</label>
+            <textarea id="message" name="message" rows="6" placeholder="Write your message here…" required></textarea>
+          </div>
+
+          <button class="action-button" type="submit">
+            <i class="fas fa-paper-plane"></i> Send Message
+          </button>
+
+          <p class="form-note">
+            We keep your email private and use it only to respond to your inquiry.
+          </p>
+        </form>
+      </div>
+
+      <aside class="info-card">
+        <h2><i class="fas fa-life-ring"></i> Support Tips</h2>
+        <ul style="margin:8px 0 0 18px;">
+          <li>Include your upload ID if asking about a specific compression.</li>
+          <li>Mention your email provider (Gmail/Outlook/Other) for faster help.</li>
+          <li>Attach screenshots if you encounter errors.</li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+</body>
+</html>
