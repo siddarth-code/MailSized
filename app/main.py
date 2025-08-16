@@ -162,8 +162,24 @@ def probe_duration(path: str) -> float:
     return dur
 
 def choose_target(provider: str, size_bytes: int) -> int:
-    cap_mb = PROVIDER_CAP_MB.get(provider, 15)
-    return int((cap_mb - 1.5) * 1024 * 1024)  # headroom
+    """Determine target size in bytes for a given provider.
+
+    The original implementation ignored the file's current size and would always
+    return the provider's maximum attachment size minus some headroom.  That
+    meant a small file could be "upscaled" to a much larger size during
+    compression, which is undesirable.  Additionally, provider lookups were
+    case-sensitive, so ``"Gmail"`` would fall back to the default instead of the
+    Gmail limits.
+
+    This version normalizes the provider name and ensures that we never suggest
+    a target larger than the current file size.
+    """
+
+    cap_mb = PROVIDER_CAP_MB.get((provider or "").lower(), PROVIDER_CAP_MB["other"])
+    # Determine provider cap with 1.5MB headroom; clamp to non-negative values.
+    target_bytes = max(0, int((cap_mb - 1.5) * 1024 * 1024))
+    # Do not enlarge small files – keep the original size if it's below the cap.
+    return min(max(size_bytes, 0), target_bytes)
 
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     if duration_sec <= 0:
