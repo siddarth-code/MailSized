@@ -8,6 +8,8 @@
   <meta name="description" content="Contact MailSized. Get support, ask questions, or share feedback."/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
+
+  {{ adsense_tag|safe }}
 </head>
 <body>
   <div class="container">
@@ -69,12 +71,15 @@
           <li>Mention your email provider (Gmail/Outlook/Other) for faster help.</li>
           <li>Attach screenshots if you encounter errors.</li>
         </ul>
+        <div id="ad-slot-contact" class="ad-slot" data-ad-slot="sidebar-300x250">
+          <div class="ad-placeholder">Sponsored • placeholder</div>
+        </div>
       </aside>
     </div>
   </div>
 <script>
     if (window.adsbygoogle) {
-      const el = document.getElementById('ad-slot-howitworks');
+      const el = document.getElementById('ad-slot-contact');
       if (el){
         const ins = document.createElement('ins');
         ins.className = 'adsbygoogle';

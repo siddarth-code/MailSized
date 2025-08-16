@@ -19,6 +19,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
 
+  {{ adsense_tag|safe }}
+
   <!-- Structured data: Article + FAQPage -->
   <script type="application/ld+json">
   {
@@ -175,8 +177,8 @@
         </ul>
 
         <div style="height:12px;"></div>
-        <div id="ad-slot-howitworks" class="w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px" data-ad-slot="sidebar-300x250">
-          <div class="text-sm" style="color:#6b7280;">Sponsored • placeholder</div>
+        <div id="ad-slot-howitworks" class="ad-slot" data-ad-slot="sidebar-300x250">
+          <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
       </aside>
     </div>

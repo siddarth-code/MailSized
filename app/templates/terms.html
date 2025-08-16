@@ -6,6 +6,8 @@
   <title>Terms & Conditions – MailSized</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
+
+  {{ adsense_tag|safe }}
 </head>
 <body>
   <div class="container">
@@ -103,7 +105,28 @@
 
     <p style="margin-top:20px;font-size:12px;color:#6b7280;">Note: This document is a general template and not legal advice. Consider asking an attorney to review for your specific use case.</p>
       </div>
+      <aside class="info-card">
+        <h2><i class="fas fa-rectangle-ad"></i> Sponsored</h2>
+        <div id="ad-slot-terms" class="ad-slot" data-ad-slot="sidebar-300x250">
+          <div class="ad-placeholder">Sponsored • placeholder</div>
+        </div>
+      </aside>
     </div>
   </div>
+  <script>
+    if (window.adsbygoogle) {
+      const el = document.getElementById('ad-slot-terms');
+      if (el){
+        const ins = document.createElement('ins');
+        ins.className = 'adsbygoogle';
+        ins.style.display = 'block';
+        ins.setAttribute('data-ad-client', '{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot', 'sidebar-300x250');
+        ins.setAttribute('data-full-width-responsive', 'true');
+        el.innerHTML = ''; el.appendChild(ins);
+        (adsbygoogle = window.adsbygoogle || []).push({});
+      }
+    }
+  </script>
 </body>
 </html>

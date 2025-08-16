@@ -20,7 +20,7 @@ import stripe
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -82,11 +82,13 @@ MAX_SIZE_GB = 2
 MAX_DURATION_SEC = 20 * 60  # 20 minutes
 DOWNLOAD_TTL_MIN = float(os.getenv("DOWNLOAD_TTL_MIN", "30"))
 
+
 class JobStatus:
     QUEUED = "queued"
     RUNNING = "running"
     DONE = "done"
     ERROR = "error"
+
 
 # ------------ Size-based pricing (server-authoritative) ------------
 def price_cents_for_size(size_bytes: int) -> int:
@@ -98,6 +100,7 @@ def price_cents_for_size(size_bytes: int) -> int:
     if mb <= 1280:  # ~1.25GB
         return 599
     return 799  # up to 2GB
+
 
 @dataclass
 class UploadMeta:
@@ -112,6 +115,7 @@ class UploadMeta:
     priority: bool = False
     transcript: bool = False
 
+
 @dataclass
 class JobState:
     job_id: str
@@ -123,10 +127,12 @@ class JobState:
     error: Optional[str] = None
     q: asyncio.Queue = field(default_factory=asyncio.Queue)
 
+
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
 uploads = UPLOADS
 jobs = JOBS
+
 
 # ------------ Helpers ------------
 def _run(cmd: str) -> subprocess.CompletedProcess:
@@ -138,6 +144,7 @@ def _run(cmd: str) -> subprocess.CompletedProcess:
         check=False,
     )
 
+
 def probe_info(path: str) -> Tuple[float, int, int]:
     if not Path(path).exists():
         raise FileNotFoundError(path)
@@ -147,7 +154,9 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         dur = float(json.loads(d.stdout or "{}").get("format", {}).get("duration", 0.0))
     except Exception:
         pass
-    s = _run(f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}")
+    s = _run(
+        f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}"
+    )
     width = height = 0
     try:
         st = json.loads(s.stdout or "{}").get("streams", [{}])[0]
@@ -157,9 +166,11 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         pass
     return max(dur, 0.0), width, height
 
+
 def probe_duration(path: str) -> float:
     dur, _, _ = probe_info(path)
     return dur
+
 
 def choose_target(provider: str, size_bytes: int) -> int:
     """Determine target size in bytes for a given provider.
@@ -181,6 +192,7 @@ def choose_target(provider: str, size_bytes: int) -> int:
     # Do not enlarge small files – keep the original size if it's below the cap.
     return min(max(size_bytes, 0), target_bytes)
 
+
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     if duration_sec <= 0:
         duration_sec = 120.0
@@ -189,12 +201,14 @@ def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
     return video_bps, audio_bps
 
+
 def decide_two_pass(duration_sec: float, video_bps: int) -> bool:
     if duration_sec >= 120:
         return True
     if video_bps <= 600_000:
         return True
     return False
+
 
 def auto_scale(width: int, height: int, video_bps: int) -> Tuple[int, int]:
     if width <= 0 or height <= 0:
@@ -212,8 +226,10 @@ def auto_scale(width: int, height: int, video_bps: int) -> Tuple[int, int]:
     target_h -= target_h % 2
     return max(target_w, 2), max(target_h, 2)
 
+
 def put(job: JobState, **payload):
     job.q.put_nowait(payload)
+
 
 async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
     yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
@@ -230,15 +246,17 @@ async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
                 yield b": keep-alive\n\n"
                 last_heartbeat = time.time()
 
+
 # --- Pricing helpers (server-authoritative) ---
 SIZE_TIERS_MB = [500, 1000, 2000]  # ≤500MB, ≤1GB, ≤2GB
 PRICES_BY_PROVIDER = {
-    "gmail":   [1.99, 2.99, 4.49],
+    "gmail": [1.99, 2.99, 4.49],
     "outlook": [2.19, 3.29, 4.99],
-    "other":   [2.49, 3.99, 5.49],
+    "other": [2.49, 3.99, 5.49],
 }
 UPSELLS = {"priority": 0.75, "transcript": 1.50}
 TAX_RATE = 0.10
+
 
 def _tier_index_from_bytes(n_bytes: int) -> int:
     mb = n_bytes / (1024 * 1024)
@@ -248,7 +266,10 @@ def _tier_index_from_bytes(n_bytes: int) -> int:
         return 1
     return 2
 
-def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, transcript: bool) -> int:
+
+def compute_order_total_cents(
+    provider: str, size_bytes: int, priority: bool, transcript: bool
+) -> int:
     prov = (provider or "gmail").lower()
     table = PRICES_BY_PROVIDER.get(prov, PRICES_BY_PROVIDER["gmail"])
     tier_idx = _tier_index_from_bytes(size_bytes)
@@ -260,6 +281,7 @@ def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, tr
     total = base + (base * TAX_RATE)
     return max(100, int(round(total * 100)))
 
+
 # ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
@@ -269,6 +291,7 @@ SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "587") or "587")
 SMTP_USER = os.environ.get("EMAIL_USERNAME", "")
 SMTP_PASS = os.environ.get("EMAIL_PASSWORD", "")
+
 
 def send_contact_message(from_email: str, subject: str, body: str) -> None:
     if not OWNER_EMAIL:
@@ -303,6 +326,7 @@ def send_contact_message(from_email: str, subject: str, body: str) -> None:
                 s.send_message(msg)
         except Exception:
             return
+
 
 def send_email_download(to_email: str, download_url: str) -> None:
     subject = "Your MailSized download"
@@ -344,8 +368,10 @@ def send_email_download(to_email: str, download_url: str) -> None:
         except Exception:
             return
 
+
 async def send_email(to_email: str, download_url: str) -> None:
     await asyncio.to_thread(send_email_download, to_email, download_url)
+
 
 # ------------ Security headers (no behavior change) ------------
 @app.middleware("http")
@@ -365,8 +391,23 @@ async def security_headers(request: Request, call_next):
     )
     return resp
 
+
 # ------------ Optional basic rate limit (off by default) ------------
 _RATE = {"tokens": {}, "capacity": 20, "refill": 20, "per": 60.0}  # generous defaults
+
+
+def _adsense_context() -> dict[str, str]:
+    """Return template variables for AdSense if enabled."""
+    tag = ""
+    client = ""
+    if os.environ.get("ENABLE_ADSENSE") == "1":
+        client = os.environ.get("ADSENSE_CLIENT_ID", "")
+        tag = (
+            f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" '
+            'crossorigin="anonymous"></script>'
+        )
+    return {"adsense_tag": tag, "adsense_client_id": client}
+
 
 @app.middleware("http")
 async def basic_rate_limit(request: Request, call_next):
@@ -376,7 +417,7 @@ async def basic_rate_limit(request: Request, call_next):
     now = time.time()
     b = _RATE["tokens"].get(ip, {"t": now, "tokens": _RATE["capacity"]})
     elapsed = now - b["t"]
-    b["tokens"] = min(_RATE["capacity"], b["tokens"] + elapsed * (_RATE["refill"]/ _RATE["per"]))
+    b["tokens"] = min(_RATE["capacity"], b["tokens"] + elapsed * (_RATE["refill"] / _RATE["per"]))
     b["t"] = now
     cost = 3 if request.url.path == "/upload" else 1
     if b["tokens"] < cost:
@@ -385,47 +426,43 @@ async def basic_rate_limit(request: Request, call_next):
     _RATE["tokens"][ip] = b
     return await call_next(request)
 
+
 # ------------ Views ------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     template = env.get_template("index.html")
-    adsense_tag = ""
-    if os.environ.get("ENABLE_ADSENSE") == "1":
-        client = os.environ.get("ADSENSE_CLIENT_ID", "")
-        adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
+    ctx = _adsense_context()
     job_id = request.query_params.get("job_id") or ""
     paid = request.query_params.get("paid") == "1"
-    return template.render(adsense_tag=adsense_tag, paid=paid, job_id=job_id)
+    return template.render(**ctx, paid=paid, job_id=job_id)
+
 
 @app.get("/terms", response_class=HTMLResponse)
 def terms() -> str:
     template = env.get_template("terms.html")
-    return template.render()
+    return template.render(**_adsense_context())
+
 
 # --- Extra pages (kept as in your current app) ---
 @app.get("/how-it-works", response_class=HTMLResponse)
 def how_it_works(request: Request):
     template = env.get_template("how-it-works.html")
-    adsense_tag = ""
-    if os.environ.get("ENABLE_ADSENSE") == "1":
-        client = os.environ.get("ADSENSE_CLIENT_ID", "")
-        adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
-    return template.render(adsense_tag=adsense_tag)
+    return template.render(**_adsense_context())
+
 
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy(request: Request):
     template = env.get_template("privacy.html")
-    adsense_tag = ""
-    if os.environ.get("ENABLE_ADSENSE") == "1":
-        client = os.environ.get("ADSENSE_CLIENT_ID", "")
-        adsense_tag = f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" crossorigin="anonymous"></script>'
-    return template.render(adsense_tag=adsense_tag)
+    return template.render(**_adsense_context())
+
 
 @app.get("/contact", response_class=HTMLResponse)
 def contact_get(request: Request):
     template = env.get_template("contact.html")
     sent = request.query_params.get("sent") == "1"
-    return template.render(sent=sent)
+    ctx = _adsense_context()
+    return template.render(**ctx, sent=sent)
+
 
 @app.post("/contact")
 async def contact_post(
@@ -439,6 +476,7 @@ async def contact_post(
         raise HTTPException(status_code=400, detail="Subject and message are required.")
     send_contact_message(user_email.strip(), subject.strip(), message.strip())
     return RedirectResponse(url="/contact?sent=1", status_code=303)
+
 
 # ------------ API ------------
 @app.post("/upload")
@@ -496,6 +534,7 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
             "price_cents": price_cents_for_size(meta.size_bytes),
         }
     )
+
 
 @app.post("/checkout")
 async def checkout(request: Request):
@@ -556,8 +595,11 @@ async def checkout(request: Request):
     except Exception:
         return JSONResponse({"error": "checkout_create_failed"}, status_code=500)
 
+
 @app.post("/stripe/webhook")
-async def stripe_webhook(request: Request, stripe_signature: str = Header(None, alias="stripe-signature")):
+async def stripe_webhook(
+    request: Request, stripe_signature: str = Header(None, alias="stripe-signature")
+):
     """
     If STRIPE_WEBHOOK_SECRET is set, verify signature. Otherwise, keep current
     permissive behavior (do not break existing deployments).
@@ -586,7 +628,11 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
     if event_type != "checkout.session.completed":
         return {"ok": True}
 
-    obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"]
+    obj = (
+        event.get("data", {}).get("object", {})
+        if isinstance(event, dict)
+        else event["data"]["object"]
+    )
     metadata = obj.get("metadata", {}) or {}
     upload_id = metadata.get("upload_id")
     job_id = metadata.get("job_id")
@@ -597,11 +643,14 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
     job = JOBS.get(job_id) if job_id else None
     if not job:
         job_id = job_id or str(uuid.uuid4())
-        job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0)
+        job = JobState(
+            job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0
+        )
         JOBS[job_id] = job
 
     asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
+
 
 @app.get("/events/{job_id}")
 async def events(job_id: str):
@@ -609,13 +658,16 @@ async def events(job_id: str):
     if not job:
         dummy = JobState(
             job_id=job_id,
-            upload=UploadMeta(upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0),
+            upload=UploadMeta(
+                upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0
+            ),
             status=JobStatus.ERROR,
             message="Unknown job",
         )
         put(dummy, type="state", status=JobStatus.ERROR, progress=0, message="Unknown job")
         return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
     return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+
 
 @app.get("/download/{job_id}")
 def download(job_id: str):
@@ -627,6 +679,7 @@ def download(job_id: str):
     if not job or job.status != JobStatus.DONE or not job.out_path:
         raise HTTPException(404, "Not ready")
     return JSONResponse({"ok": True, "url": f"{PUBLIC_BASE_URL}/media/{job.out_path.name}"})
+
 
 async def cleanup_job(job_id: str) -> None:
     job = JOBS.pop(job_id, None)
@@ -646,9 +699,11 @@ async def cleanup_job(job_id: str) -> None:
     except Exception:
         pass
 
+
 async def _schedule_cleanup(job_id: str) -> None:
     await asyncio.sleep(DOWNLOAD_TTL_MIN * 60)
     await cleanup_job(job_id)
+
 
 # ------------ Worker ------------
 def _preexec_ulimits():
@@ -658,6 +713,7 @@ def _preexec_ulimits():
     """
     try:
         import resource
+
         # CPU 30 minutes
         resource.setrlimit(resource.RLIMIT_CPU, (1800, 1800))
         # Address space ~2 GB
@@ -667,6 +723,7 @@ def _preexec_ulimits():
     except Exception:
         # If not available on the platform, ignore.
         pass
+
 
 async def run_job(job: JobState):
     u = job.upload
@@ -686,15 +743,24 @@ async def run_job(job: JobState):
 
         vf = f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease:flags=bicubic"
         common = [
-            FFMPEG, "-y",
-            "-i", str(u.src_path),
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-preset", "veryfast" if u.priority else "faster",
-            "-movflags", "+faststart",
-            "-c:a", "aac",
-            "-b:a", str(a_bps),
-            "-max_muxing_queue_size", "9999",
+            FFMPEG,
+            "-y",
+            "-i",
+            str(u.src_path),
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast" if u.priority else "faster",
+            "-movflags",
+            "+faststart",
+            "-c:a",
+            "aac",
+            "-b:a",
+            str(a_bps),
+            "-max_muxing_queue_size",
+            "9999",
         ]
 
         def percent_from_out_time_ms(line: str) -> Optional[float]:
@@ -707,9 +773,15 @@ async def run_job(job: JobState):
 
         async def run_and_stream(cmd: list[str]) -> int:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, "-progress", "pipe:1", "-nostats", "-loglevel", "error",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                preexec_fn=_preexec_ulimits  # sandbox-ish
+                *cmd,
+                "-progress",
+                "pipe:1",
+                "-nostats",
+                "-loglevel",
+                "error",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                preexec_fn=_preexec_ulimits,  # sandbox-ish
             )
             last_emit = 0.0
             while True:
@@ -721,19 +793,38 @@ async def run_job(job: JobState):
                     pct = percent_from_out_time_ms(txt)
                     if pct is not None and pct - last_emit >= 1.0:
                         job.progress = pct
-                        put(job, type="progress", progress=round(pct, 1), status="running", message="Compressing…")
+                        put(
+                            job,
+                            type="progress",
+                            progress=round(pct, 1),
+                            status="running",
+                            message="Compressing…",
+                        )
                         last_emit = pct
             return await proc.wait()
 
         if do_two_pass:
-            rc1 = await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "1", "-f", "mp4", "/dev/null"])
+            rc1 = await run_and_stream(
+                common + ["-b:v", str(v_bps), "-pass", "1", "-f", "mp4", "/dev/null"]
+            )
             if rc1 != 0:
                 raise RuntimeError("FFmpeg pass 1 failed")
             rc2 = await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "2", str(out_path)])
             if rc2 != 0:
                 raise RuntimeError("FFmpeg pass 2 failed")
         else:
-            rc = await run_and_stream(common + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)])
+            rc = await run_and_stream(
+                common
+                + [
+                    "-b:v",
+                    str(v_bps),
+                    "-maxrate",
+                    str(int(v_bps * 1.2)),
+                    "-bufsize",
+                    str(int(v_bps * 2)),
+                    str(out_path),
+                ]
+            )
             if rc != 0:
                 raise RuntimeError("FFmpeg failed")
 
@@ -746,7 +837,14 @@ async def run_job(job: JobState):
         job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
 
-        put(job, type="state", status=JobStatus.DONE, progress=100.0, message="Complete", download_url=dl_url)
+        put(
+            job,
+            type="state",
+            status=JobStatus.DONE,
+            progress=100.0,
+            message="Complete",
+            download_url=dl_url,
+        )
 
         if u.email:
             asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
@@ -757,6 +855,7 @@ async def run_job(job: JobState):
         job.status = JobStatus.ERROR
         job.error = str(e)
         put(job, type="state", status=JobStatus.ERROR, progress=job.progress, message=str(e))
+
 
 # ------------ Health ------------
 @app.get("/healthz")
