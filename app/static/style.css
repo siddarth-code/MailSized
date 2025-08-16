@@ -110,6 +110,22 @@ header p{
 .main-card{ padding: 18px; }
 .info-card{ padding: 16px; }
 
+/* ---------- ad slots ---------- */
+.ad-slot{
+  width:100%;
+  min-height:180px;
+  margin-top:15px;
+  padding:16px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:var(--card);
+  box-shadow:var(--shadow);
+}
+.ad-placeholder{
+  font-size:13px;
+  color:var(--muted);
+}
+
 /* ---------- steps (top pills) ---------- */
 .steps{
   display:flex; gap:6px; padding: 8px; background:#fafbff;
