@@ -1,3 +1,4 @@
+<!-- app/templates/privacy.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,131 +6,136 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta http-equiv="Cache-Control" content="no-store"/>
   <title>Privacy Policy – MailSized</title>
-
+  <meta name="description" content="MailSized Privacy Policy: what we collect, how we use it, file retention and deletion, payments, security, and your choices.">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
 
-  {{ adsense_tag|safe }}
-  <meta name="description" content="MailSized Privacy Policy: file deletion within ~24 hours, no watermarks, secure Stripe payments, minimal analytics."/>
-  <meta name="keywords" content="privacy policy, delete uploaded files, video compressor privacy, GDPR, CCPA, Stripe, email attachment size"/>
-  <style>
-    .top-nav { display:flex; gap:10px; align-items:center; justify-content:flex-start; margin: 8px 0 12px; font-size: 13px; color: var(--muted);}
-    .top-nav .top-nav-link { color: var(--brand-600); font-weight: 700; text-decoration: none; }
-    .top-nav .top-nav-link:hover { text-decoration: underline; }
-    .top-nav .sep { color: #c7c9d3; }
-  </style>
+  <!-- Structured data for SEO -->
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"PrivacyPolicy",
+    "name":"MailSized Privacy Policy",
+    "datePublished":"2025-08-18",
+    "dateModified":"2025-08-18",
+    "publisher":{"@type":"Organization","name":"MailSized"}
+  }
+  </script>
 </head>
 <body>
   <div class="container">
     <header>
-      <div class="logo">
-        <div class="logo-icon"><i class="fas fa-video"></i></div>
-        <h1>MailSized</h1>
+      <div class="logo" style="justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="logo-icon"><i class="fas fa-video"></i></div>
+          <h1>MailSized</h1>
+        </div>
+        <nav aria-label="Primary">
+          <a href="/" class="constraint">Home</a>
+          <a href="/how-it-works" class="constraint">How it Works</a>
+          <a href="/privacy" class="constraint" aria-current="page">Privacy</a>
+          <a href="/contact" class="constraint">Contact Us</a>
+        </nav>
       </div>
-      <p>Compress large videos to fit email attachments</p>
-
-      <!-- Top Navigation -->
-      <nav class="top-nav" aria-label="Main">
-        <a href="/" class="top-nav-link">Home</a>
-        <span class="sep">|</span>
-        <a href="/how-it-works" class="top-nav-link">How it Works</a>
-        <span class="sep">|</span>
-        <a href="/privacy" class="top-nav-link">Privacy</a>
-        <span class="sep">|</span>
-        <a href="/contact" class="top-nav-link">Contact Us</a>
-      </nav>
+      <p>Your videos, handled with care. Clear retention and no resale of data.</p>
     </header>
 
-    <div class="card-container" style="grid-template-columns:minmax(0,1fr) 320px;">
-      <article class="main-card" style="padding:18px;">
-        <h2 class="step-title" style="margin-top:0;"><i class="fas fa-shield-alt"></i> Privacy Policy</h2>
-        <p style="color:var(--muted);font-size:13px;margin:0 0 12px;">Effective date: <strong>Aug 18, 2025</strong></p>
-
-        <h3 class="step-title"><i class="fas fa-user-lock"></i> What We Collect</h3>
-        <ul style="padding-left:18px; line-height:1.7;">
-          <li><strong>Uploaded video files</strong> (source) and <strong>compressed output files</strong> for the sole purpose of performing the service.</li>
-          <li><strong>Operational data</strong>: file size, format, duration, resolution (used to compute the optimal compression settings).</li>
-          <li><strong>Contact email</strong> (required) to deliver the download link.</li>
-          <li><strong>Payment info</strong> is processed by Stripe. We do not receive or store card numbers.</li>
-          <li><strong>Basic logs</strong> (IP, timestamps, error traces) for security and troubleshooting.</li>
-        </ul>
-
-        <h3 class="step-title"><i class="fas fa-trash-can"></i> File Retention & Deletion</h3>
-        <p>We operate a privacy-first pipeline:</p>
-        <ul style="padding-left:18px; line-height:1.7;">
-          <li>Uploaded source files are processed, then scheduled for deletion.</li>
-          <li>Compressed outputs are kept only to allow download and link delivery via email.</li>
-          <li><strong>Both source and output files are automatically deleted within ~24 hours</strong> of completion or link delivery.</li>
-          <li>Expired links become permanently inaccessible.</li>
-        </ul>
-
-        <h3 class="step-title"><i class="fas fa-lock"></i> Security</h3>
-        <ul style="padding-left:18px; line-height:1.7;">
-          <li>Transport uses HTTPS. Stripe handles all card data on their PCI-compliant platform.</li>
-          <li>Access to processing nodes and storage is restricted and monitored.</li>
-          <li>No watermarks or ad injections into your files.</li>
-        </ul>
-
-        <h3 class="step-title"><i class="fas fa-chart-line"></i> Cookies & Analytics</h3>
-        <ul style="padding-left:18px; line-height:1.7;">
-          <li>We may use strictly necessary cookies for session integrity.</li>
-          <li>We may use privacy-respecting analytics to understand aggregate usage (no video content is analyzed).</li>
-          <li>Any ad networks you enable (e.g., AdSense) may set their own cookies as governed by their policies.</li>
-        </ul>
-
-        <h3 class="step-title"><i class="fas fa-file-invoice-dollar"></i> Payments</h3>
-        <p>Payments are processed by <strong>Stripe</strong>. We do not store card data. For details, see Stripe’s privacy policy.</p>
-
-        <h3 class="step-title"><i class="fas fa-book"></i> Your Rights</h3>
-        <ul style="padding-left:18px; line-height:1.7;">
-          <li>Request access, correction, or deletion of your personal data.</li>
-          <li>Object to or restrict processing where applicable by law (e.g., GDPR/CCPA).</li>
-          <li>Contact us to exercise these rights or ask questions at <strong>support@mailsized.com</strong>.</li>
-        </ul>
-
-        <h3 class="step-title"><i class="fas fa-exchange-alt"></i> Changes</h3>
-        <p>We may update this Privacy Policy from time to time. Changes will be posted here with a new effective date.</p>
-
-        <div style="margin-top:16px;">
-          <a href="/" class="action-button" style="width:auto;padding:10px 16px;font-weight:800;">
-            <i class="fas fa-home"></i> Back to Home
-          </a>
-        </div>
-      </article>
-
-      <aside class="info-card" style="padding:14px;">
-        <h2 style="display:flex;align-items:center;gap:8px;font-size:16px;margin:0 0 10px;">
-          <i class="fas fa-rectangle-ad"></i> Sponsored
-        </h2>
-        <div id="ad-slot-privacy" class="ad-slot" data-ad-slot="privacy-300x250">
-          <div class="ad-placeholder">Ad placeholder</div>
-        </div>
-
-        <div class="info-card" style="padding:12px;margin-top:12px;">
-          <h3 style="margin:0 0 6px;font-size:14px;">Contact</h3>
-          <p style="margin:0; color:var(--muted); font-size:13px;">
-            Email: <strong>support@mailsized.com</strong><br/>
-            Effective: <strong>Aug 18, 2025</strong>
+    <div class="card-container">
+      <div class="main-card">
+        <div class="step-content">
+          <h2 class="step-title"><i class="fas fa-user-shield"></i> Overview</h2>
+          <p class="file-meta">Effective date: August 18, 2025</p>
+          <p>
+            This Privacy Policy explains what information MailSized (“we”, “us”) collects, how we use it, and
+            the choices you have. We designed MailSized with minimal data collection and short retention by default.
           </p>
+
+          <h2 class="step-title"><i class="fas fa-database"></i> What we collect</h2>
+          <ul style="margin:0 0 16px 18px; line-height:1.6;">
+            <li><strong>Account/contact:</strong> Your email address (required) to send your download link and updates.</li>
+            <li><strong>Files you upload:</strong> Your source video and the compressed output. We also read technical metadata (e.g., duration, resolution) to perform compression.</li>
+            <li><strong>Payment:</strong> Payments are processed by Stripe. We never see full card numbers.</li>
+            <li><strong>Usage & logs:</strong> Basic HTTP logs (IP, user agent, timings) for reliability, security, and abuse prevention.</li>
+            <li><strong>Support:</strong> If you contact us, we’ll collect the details you submit (email, subject, message).</li>
+          </ul>
+
+          <h2 class="step-title"><i class="fas fa-cogs"></i> How we use information</h2>
+          <ul style="margin:0 0 16px 18px; line-height:1.6;">
+            <li>Compress and deliver your video according to the email provider target you choose.</li>
+            <li>Send your download link and transactional notifications.</li>
+            <li>Operate, protect, and improve the service (monitoring, debugging, preventing abuse/fraud).</li>
+            <li>Respond to support requests.</li>
+          </ul>
+
+          <h2 class="step-title"><i class="fas fa-trash-alt"></i> File retention & deletion</h2>
+          <p>
+            We automatically delete the uploaded source and compressed output after the download window
+            (about <strong>30 minutes</strong> by default). This is managed by our job cleanup process. If you need an exception for troubleshooting,
+            contact us before the window ends.
+          </p>
+
+          <h2 class="step-title"><i class="fas fa-credit-card"></i> Payments</h2>
+          <p>
+            We use Stripe to process payments. Your payment details are handled by Stripe and do not pass through our servers.
+            See Stripe’s privacy documentation for more information.
+          </p>
+
+          <h2 class="step-title"><i class="fas fa-share-alt-slash"></i> Sharing</h2>
+          <p>
+            We do <strong>not</strong> sell or rent your personal information. We share data only as needed to operate the service
+            (e.g., payments with Stripe, email delivery with Mailgun/SMTP), comply with law, or protect our rights and users.
+          </p>
+
+          <h2 class="step-title"><i class="fas fa-lock"></i> Security</h2>
+          <ul style="margin:0 0 16px 18px; line-height:1.6;">
+            <li>Transport encryption (HTTPS) is required.</li>
+            <li>Optional Stripe webhook signature verification (enabled when configured).</li>
+            <li>Security headers set to reduce common risks (X-Content-Type-Options, Referrer-Policy, etc.).</li>
+            <li>Short file retention by default; automated cleanup tasks run post-delivery.</li>
+          </ul>
+
+          <h2 class="step-title"><i class="fas fa-cookie-bite"></i> Cookies & analytics</h2>
+          <p>
+            We aim to operate with minimal cookies. If ad placements or performance monitoring are enabled in the future,
+            we will update this page and provide any required consent tools.
+          </p>
+
+          <h2 class="step-title"><i class="fas fa-user-check"></i> Your choices & rights</h2>
+          <ul style="margin:0 0 16px 18px; line-height:1.6;">
+            <li>You can request deletion of support correspondence.</li>
+            <li>To request access or deletion for logs associated with your activity, contact us; we’ll verify your request.</li>
+            <li>You can opt out of non-essential emails (we only send transactional messages by default).</li>
+          </ul>
+
+          <h2 class="step-title"><i class="fas fa-sync-alt"></i> Changes</h2>
+          <p>
+            We may update this policy to reflect product or legal changes. We’ll adjust the “Effective date” and
+            post the updated version here.
+          </p>
+
+          <h2 class="step-title"><i class="fas fa-envelope-open"></i> Contact</h2>
+          <p>
+            Questions? <a href="/contact">Contact us</a> and we’ll get back to you.
+          </p>
+
+          <p class="file-meta" style="margin-top:14px;"><em>Effective date: August 18, 2025</em></p>
+        </div>
+      </div>
+
+      <aside class="info-card">
+        <h2><i class="fas fa-info-circle"></i> Summary (quick read)</h2>
+        <ul style="margin:0 0 0 18px; line-height:1.6;">
+          <li>Email required to deliver your download link.</li>
+          <li>Files auto-delete after ~30 minutes.</li>
+          <li>Payments via Stripe; card data not stored by us.</li>
+          <li>No selling of personal data.</li>
+          <li>Security headers & short retention by design.</li>
+        </ul>
+        <div id="ad-slot-sidebar" class="w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250">
+          <div class="text-sm text-gray-500">Sponsored • placeholder</div>
         </div>
       </aside>
     </div>
   </div>
-
-  <!-- Optional AdSense mount -->
-  <script>
-    if (window.adsbygoogle) {
-      const el = document.getElementById('ad-slot-privacy');
-      if (el) {
-        const ins = document.createElement('ins');
-        ins.className='adsbygoogle'; ins.style.display='block';
-        ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
-        ins.setAttribute('data-ad-slot','privacy-300x250');
-        ins.setAttribute('data-full-width-responsive','true');
-        el.innerHTML=''; el.appendChild(ins);
-        (adsbygoogle = window.adsbygoogle || []).push({});
-      }
-    }
-  </script>
 </body>
 </html>
