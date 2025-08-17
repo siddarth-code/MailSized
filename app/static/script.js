@@ -1,5 +1,5 @@
 /* app/static/script.js */
-/* MailSized script • v7.2 (robust upload progress + instant download reveal + provider-aware pricing) */
+/* MailSized script • v7.3 (adds startJobOnce + resilient SSE) */
 
 const $  = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -114,7 +114,6 @@ function wireUpload(){
 /* progress helpers (IDs must match index.html) */
 function setUploadProgress(pct, note="Uploading…"){
   const box = $("uploadProgress");
-  // IDs must mirror index.html (uploadFill/uploadPct)
   const fill = $("uploadFill");
   const pctEl= $("uploadPct");
   const noteEl= $("uploadNote");
@@ -140,7 +139,7 @@ async function handleFile(file){
   if(emailVal) fd.append("email", emailVal);
 
   // Use XHR for upload progress with robust fallback for non-computable totals
-  let heartbeat; // ensures the bar never appears stuck
+  let heartbeat;
   const uploadRes = await new Promise((resolve, reject)=>{
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/upload");
@@ -150,12 +149,11 @@ async function handleFile(file){
     xhr.upload.addEventListener("progress", (e)=>{
       let loaded = e.loaded || 0;
       let total  = e.lengthComputable ? (e.total || totalFallback) : totalFallback;
-      if(total <= 0) total = loaded || 1;     // last resort
+      if(total <= 0) total = loaded || 1;
       const pct = (loaded / total) * 100;
       setUploadProgress(pct);
     });
 
-    // A gentle heartbeat in case some environments emit sparse progress events
     heartbeat = setInterval(()=>{
       const pctText = $("uploadPct")?.textContent || "0%";
       const current = parseInt(pctText, 10) || 0;
@@ -261,6 +259,22 @@ function wireCheckout(){
   });
 }
 
+/* ---------- job kick (NEW) ---------- */
+// Ensure the compression job starts one time per jobId (even if the webhook is slow).
+function startJobOnce(jobId) {
+  if (!jobId) return;
+  const key = `job-started:${jobId}`;
+  if (sessionStorage.getItem(key)) return;
+
+  fetch(`/start/${encodeURIComponent(jobId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    keepalive: true,                 // lets it finish during navigations
+  }).catch(()=>{ /* ignore */ });
+
+  sessionStorage.setItem(key, "1");
+}
+
 /* ---------- resume & SSE ---------- */
 function resumeIfPaid(){
   const root = $("pageRoot");
@@ -273,6 +287,9 @@ function resumeIfPaid(){
 
   if(!paid || !jobId) return;
 
+  // NEW: kick the job before we subscribe to events
+  startJobOnce(jobId);
+
   const post = $("postPaySection");
   if(post) post.style.display = "";
   setStep(2);
@@ -282,10 +299,9 @@ function resumeIfPaid(){
 function revealDownload(url){
   const dlSection = $("downloadSection");
   const dlLink = $("downloadLink");
-  const emailNote = $("emailNote"); // id MUST be all lowercase in HTML
+  const emailNote = $("emailNote");
   if(!url || !dlLink || !dlSection) return;
   dlLink.href = url;
-  // Explicitly override CSS rule (#downloadSection {display:none})
   dlSection.style.display = "block";
   if(emailNote) emailNote.style.display = "";
   setStep(3);
@@ -297,8 +313,12 @@ function startSSE(jobId){
   const fillEl= $("progressFill");
   const noteEl= $("progressNote");
 
-  try{
+  let attempts = 0;
+  const maxAttempts = 5;
+
+  const connect = () => {
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
+
     es.onmessage = async (evt)=>{
       let data={}; try{ data = JSON.parse(evt.data||"{}"); }catch{}
 
@@ -330,8 +350,20 @@ function startSSE(jobId){
         if(noteEl) noteEl.textContent = "Error";
       }
     };
-    es.onerror = ()=>{/* heartbeats keep it alive */};
-  }catch{/* noop */}
+
+    es.onerror = ()=>{
+      // Retry with gentle backoff (handles transient proxies, etc.)
+      es.close();
+      attempts += 1;
+      if (attempts <= maxAttempts) {
+        setTimeout(connect, Math.min(1000 * attempts, 5000));
+      } else {
+        showError("Connection to progress stream lost. Please refresh the page.");
+      }
+    };
+  };
+
+  connect();
 }
 
 /* ---------- errors ---------- */
