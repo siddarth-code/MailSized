@@ -36,7 +36,7 @@ ENABLE_RATE_LIMIT = os.getenv("ENABLE_RATE_LIMIT", "0") == "1"
 # Optional identifiers for Google services
 ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "ca-pub-7488512497606071")
 GA_MEASUREMENT_ID = os.getenv("GA_MEASUREMENT_ID", "")  # e.g. G-XXXXXXX
-
+ADSENSE_SIDEBAR_SLOT = os.getenv("ADSENSE_SIDEBAR_SLOT", "5410433645") 
 # Paths
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = APP_DIR / "templates"
