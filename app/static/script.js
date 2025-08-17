@@ -308,6 +308,8 @@ function startSSE(jobId){
 
   try{
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
+    let opened = false;
+    es.onopen = ()=> { opened = true; };
     es.onmessage = async (evt)=>{
       let data={}; try{ data = JSON.parse(evt.data||"{}"); }catch{}
 
@@ -339,8 +341,43 @@ function startSSE(jobId){
         if(noteEl) noteEl.textContent = "Error";
       }
     };
-    es.onerror = ()=>{/* heartbeats keep it alive */};
-  }catch{/* noop */}
+    es.onerror = ()=>{
+      es.close();
+      if(!opened) pollStatus(jobId);
+    };
+  }catch{
+    pollStatus(jobId);
+  }
+}
+
+async function pollStatus(jobId, tries = 240){ // ~4 min at 1s
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(`/status/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      if (!r.ok) throw 0;
+      const j = await r.json();
+      const p = Number(j.progress || 0);
+      const pctEl = $("progressPct");
+      const fillEl= $("progressFill");
+      const noteEl= $("progressNote");
+      if (pctEl) pctEl.textContent = `${Math.floor(p)}%`;
+      if (fillEl) fillEl.style.width = `${Math.floor(p)}%`;
+      if (noteEl) noteEl.textContent = j.message || "Working…";
+      if (j.status === "done") {
+        try {
+          const r2 = await fetch(`/download/${encodeURIComponent(jobId)}`);
+          const j2 = await r2.json();
+          if (j2?.url) revealDownload(j2.url);
+        } catch {}
+        return;
+      }
+      if (j.status === "error") {
+        showError(j.message || "Compression failed.");
+        return;
+      }
+    } catch {}
+    await new Promise(res => setTimeout(res, 1000));
+  }
 }
 
 /* ---------- errors ---------- */

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from pathlib import Path
 from typing import AsyncIterator, Dict, Optional, Tuple
+import logging
 
 import requests
 import stripe
@@ -125,6 +126,8 @@ class JobState:
 
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
+
+log = logging.getLogger("mailsized")
 
 # ------------ Helpers ------------
 def _run(cmd: str) -> subprocess.CompletedProcess:
@@ -525,11 +528,30 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
 async def start_job(job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="job_not_found")
+        raise HTTPException(status_code=404, detail="Unknown job")
     if job.status in (JobStatus.RUNNING, JobStatus.DONE):
         return {"ok": True, "status": job.status}
+    if not job.upload.src_path.exists():
+        job.status = JobStatus.ERROR
+        job.error = "Upload file no longer available"
+        put(job, type="state", status=JobStatus.ERROR, progress=0, message=job.error)
+        return {"ok": False, "status": "error"}
     asyncio.create_task(run_job(job))
     return {"ok": True, "status": "started"}
+
+# Lightweight status for polling fallback
+@app.get("/status/{job_id}")
+def job_status(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return {
+        "ok": True,
+        "status": job.status,
+        "progress": round(job.progress, 1),
+        "message": job.message,
+        "has_output": bool(job.out_path and job.out_path.exists()),
+    }
 
 @app.get("/events/{job_id}")
 async def events(job_id: str):
@@ -575,7 +597,9 @@ def _preexec_ulimits():
 async def run_job(job: JobState):
     u = job.upload
     job.status = JobStatus.RUNNING
-    put(job, type="state", status=JobStatus.RUNNING, progress=0.0, message="Starting…")
+    job.message = "Starting…"
+    log.info(f"[job {job.job_id}] start: {u.src_path} size={u.size_bytes} dur={u.duration_sec:.2f}s")
+    put(job, type="state", status=JobStatus.RUNNING, progress=0.0, message=job.message)
 
     try:
         target_bytes = choose_target(u.provider, u.size_bytes)
@@ -585,6 +609,7 @@ async def run_job(job: JobState):
         v_bps, a_bps = compute_bitrates(u.duration_sec, target_bytes)
         do_two_pass = decide_two_pass(u.duration_sec, v_bps)
         tw, th = auto_scale(u.width, u.height, v_bps)
+        log.info(f"[job {job.job_id}] ffmpeg two_pass={do_two_pass} v_bps={v_bps} a_bps={a_bps} scale={tw}x{th}")
 
         out_name = f"{job.job_id}.mp4"
         out_path = OUTPUT_DIR / out_name
@@ -661,11 +686,13 @@ async def run_job(job: JobState):
         job.progress = 100.0; job.status = JobStatus.DONE; job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
         put(job, type="state", status=JobStatus.DONE, progress=100.0, message="Complete", download_url=dl_url)
+        log.info(f"[job {job.job_id}] done -> {out_path} ({out_path.stat().st_size} bytes)")
         if u.email: asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
         asyncio.create_task(_schedule_cleanup(job.job_id))
 
     except Exception as e:
         job.status = JobStatus.ERROR; job.error = str(e)
+        log.error(f"[job {job.job_id}] error: {e}")
         put(job, type="state", status=JobStatus.ERROR, progress=job.progress, message=str(e))
 
 # ------------ Health ------------
