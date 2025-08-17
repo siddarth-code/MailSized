@@ -126,6 +126,7 @@ class JobState:
 
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
+FFMPEG_LOCK = asyncio.Lock()
 
 log = logging.getLogger("mailsized")
 
@@ -185,6 +186,23 @@ def choose_target(provider: str, size_bytes: int) -> int:
     cap_mb = PROVIDER_TARGETS_MB.get((provider or "").lower(), PROVIDER_TARGETS_MB["other"])
     target_bytes = max(0, int((cap_mb - 1.5) * 1024 * 1024))
     return min(max(size_bytes, 0), target_bytes)
+
+
+def email_target_bitrates(duration_s: float, target_bytes: int, audio_kbps: int = 96, overhead: float = 0.92) -> Tuple[int, int]:
+    """Compute conservative video bitrate and scale cap for an e-mail sized output.
+
+    The calculation reserves a portion of the overall target for container
+    overhead and audio.  The remaining budget determines both the video bitrate
+    (in kbps) and a safe scaling cap that keeps encoder memory usage low.
+    """
+
+    if duration_s <= 0:
+        duration_s = 1.0
+    total_bits = target_bytes * 8 * overhead
+    total_kbps = total_bits / duration_s / 1000.0
+    v_kbps = max(120.0, total_kbps - audio_kbps)
+    cap = 1280 if v_kbps >= 800 else 854
+    return int(v_kbps), cap
 
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
     if duration_sec <= 0: duration_sec = 120.0
@@ -606,16 +624,14 @@ async def run_job(job: JobState):
         if target_bytes <= 0:
             target_bytes = max(10 * 1024 * 1024, u.size_bytes)  # safety floor
 
-        v_bps, a_bps = compute_bitrates(u.duration_sec, target_bytes)
-        do_two_pass = decide_two_pass(u.duration_sec, v_bps)
-        tw, th = auto_scale(u.width, u.height, v_bps)
-        log.info(f"[job {job.job_id}] ffmpeg two_pass={do_two_pass} v_bps={v_bps} a_bps={a_bps} scale={tw}x{th}")
+        v_kbps, cap = email_target_bitrates(u.duration_sec, target_bytes)
+        log.info(f"[job {job.job_id}] ffmpeg v_kbps={v_kbps} cap={cap}")
 
         out_name = f"{job.job_id}.mp4"
         out_path = OUTPUT_DIR / out_name
         if out_path.exists(): out_path.unlink(missing_ok=True)
 
-        vf = f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease:flags=bicubic"
+        vf = f"scale='min({cap},iw)':'-2'"
 
         # Stream mapping and audio presence
         map_args = ["-map", "0:v:0"]
@@ -628,12 +644,22 @@ async def run_job(job: JobState):
             *map_args,
             "-vf", vf,
             "-c:v", "libx264",
-            "-preset", ("veryfast" if u.priority else "faster"),
+            "-preset", "veryfast",
+            "-profile:v", "main",
+            "-level", "3.1",
+            "-pix_fmt", "yuv420p",
+            "-threads", "1",
+            "-x264-params", "ref=1:bframes=0:rc-lookahead=10",
             "-movflags", "+faststart",
             "-max_muxing_queue_size", "9999",
             "-hide_banner",
         ]
-        audio_args = (["-c:a", "aac", "-b:a", str(a_bps)] if u.has_audio else ["-an"])
+        a_kbps = 96
+        audio_args = (
+            ["-c:a", "aac", "-b:a", f"{a_kbps}k", "-ac", "2", "-ar", "44100"]
+            if u.has_audio
+            else ["-an"]
+        )
 
         def percent_from_out_time_ms(line: str) -> Optional[float]:
             m = re.match(r"out_time_ms=(\d+)", line.strip())
@@ -664,20 +690,19 @@ async def run_job(job: JobState):
                 raise RuntimeError(err or "FFmpeg failed")
             return rc
 
-        passlog = str(OUTPUT_DIR / f"ffpass_{job.job_id}")
-
-        if do_two_pass:
-            # PASS 1: video-only stats; use null muxer to avoid “Nothing was written…”
+        async with FFMPEG_LOCK:
             await run_and_stream(
-                video_core + ["-an", "-b:v", str(v_bps), "-pass", "1", "-passlogfile", passlog, "-f", "null", "/dev/null"]
-            )
-            # PASS 2: real encode with audio (if present)
-            await run_and_stream(
-                video_core + audio_args + ["-b:v", str(v_bps), "-pass", "2", "-passlogfile", passlog, str(out_path)]
-            )
-        else:
-            await run_and_stream(
-                video_core + audio_args + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)]
+                video_core
+                + audio_args
+                + [
+                    "-b:v",
+                    f"{v_kbps}k",
+                    "-maxrate",
+                    f"{int(v_kbps * 1.5)}k",
+                    "-bufsize",
+                    f"{int(v_kbps * 2)}k",
+                    str(out_path),
+                ]
             )
 
         if not out_path.exists() or out_path.stat().st_size <= 0:
