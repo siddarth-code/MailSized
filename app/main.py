@@ -396,17 +396,16 @@ async def security_headers(request: Request, call_next):
 _RATE = {"tokens": {}, "capacity": 20, "refill": 20, "per": 60.0}  # generous defaults
 
 
+ADSENSE_CLIENT_ID = "ca-pub-7488512497606071"
+
+
 def _adsense_context() -> dict[str, str]:
-    """Return template variables for AdSense if enabled."""
-    tag = ""
-    client = ""
-    if os.environ.get("ENABLE_ADSENSE") == "1":
-        client = os.environ.get("ADSENSE_CLIENT_ID", "")
-        tag = (
-            f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client}" '
-            'crossorigin="anonymous"></script>'
-        )
-    return {"adsense_tag": tag, "adsense_client_id": client}
+    """Return template variables for AdSense."""
+    tag = (
+        f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT_ID}" '
+        'crossorigin="anonymous"></script>'
+    )
+    return {"adsense_tag": tag, "adsense_client_id": ADSENSE_CLIENT_ID}
 
 
 @app.middleware("http")
@@ -462,16 +461,19 @@ def contact_get(request: Request):
     sent = request.query_params.get("sent") == "1"
     ctx = _adsense_context()
     return template.render(**ctx, sent=sent)
-    
+
+
 @app.get("/blogs", response_class=HTMLResponse)
 def blogs_index():
     template = env.get_template("blogs.html")
-    return template.render()
+    return template.render(**_adsense_context())
+
 
 @app.get("/blog/meet-mailsized", response_class=HTMLResponse)
 def blog_meet_mailsized():
     template = env.get_template("blog-meet-mailsized.html")
-    return template.render()
+    return template.render(**_adsense_context())
+
 
 @app.post("/contact")
 async def contact_post(
