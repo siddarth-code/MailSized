@@ -252,6 +252,20 @@
   </div>
 
   <!-- Core app JS always loads; do not couple to ads/analytics -->
+  <script>
+    // One-shot backup kick: if we returned from Stripe (paid=1),
+    // ask the server to start the job in case the webhook missed.
+    (function () {
+      try {
+        const root = document.getElementById('pageRoot');
+        const paid = root && root.dataset.paid === '1';
+        const jobId = root && root.dataset.jobId;
+        if (paid && jobId) {
+          fetch(`/start/${jobId}`, { method: 'POST' }).catch(() => {});
+        }
+      } catch (e) {}
+    })();
+  </script>
   <script defer src="/static/script.js?v=2025-08-14-7"></script>
 
   <!-- Defer ad rendering until idle; wrapped in try/catch; safe if blocked -->

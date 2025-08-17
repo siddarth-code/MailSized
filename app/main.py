@@ -272,6 +272,21 @@ def put(job: JobState, **payload):
     job.q.put_nowait(payload)
 
 
+# --- Resilient job starter (idempotent) ---------------------------------------
+def _start_job_if_idle(job: JobState) -> bool:
+    """Start run_job if the job exists and isn't already running/done.
+    Returns True if we kicked it off, False otherwise. Safe to call multiple times."""
+    if not job:
+        return False
+    if job.status in (JobStatus.RUNNING, JobStatus.DONE):
+        return False
+    if job.status == JobStatus.ERROR:
+        return False
+    job.status = JobStatus.QUEUED if job.status not in (JobStatus.QUEUED,) else job.status
+    asyncio.create_task(run_job(job))
+    return True
+
+
 async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
     yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
     last_heartbeat = time.time()
@@ -696,6 +711,16 @@ async def stripe_webhook(
     return {"ok": True, "job_id": job.job_id}
 
 
+@app.post("/start/{job_id}")
+async def start_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        # tolerate stale job ids; front-end will continue gracefully
+        return JSONResponse({"ok": False, "reason": "unknown_job"}, status_code=404)
+    kicked = _start_job_if_idle(job)
+    return {"ok": True, "kicked": bool(kicked), "status": job.status}
+
+
 @app.get("/events/{job_id}")
 async def events(job_id: str):
     job = JOBS.get(job_id)
@@ -710,6 +735,8 @@ async def events(job_id: str):
         )
         put(dummy, type="state", status=JobStatus.ERROR, progress=0, message="Unknown job")
         return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
+    # Safety net: if webhook didn’t fire, kick it off now.
+    _start_job_if_idle(job)
     return StreamingResponse(sse_stream(job), media_type="text/event-stream")
 
 
