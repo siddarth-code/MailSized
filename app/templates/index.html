@@ -7,15 +7,8 @@
   <link rel="dns-prefetch" href="//www.googletagmanager.com">
   <link rel="dns-prefetch" href="//pagead2.googlesyndication.com">
 
-  <!-- Google Analytics (gtag) -->
+  <!-- Google Analytics (loader only; bootstrap happens in /static/script.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-S5S8LF8NDE"></script>
-  <script>
-    /* kept minimal on purpose; CSP allows this inline bootstrap */
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){ dataLayer.push(arguments); }
-    gtag('js', new Date());
-    gtag('config', 'G-S5S8LF8NDE');
-  </script>
 
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -24,11 +17,15 @@
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
-
-  {{ adsense_tag|safe }}
 </head>
 
-<body id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id }}">
+<body
+  id="pageRoot"
+  data-paid="{{ '1' if paid else '0' }}"
+  data-job-id="{{ job_id }}"
+  data-ga-id="G-S5S8LF8NDE"
+  data-adsense-client="{{ adsense_client_id }}"
+>
   <div class="container">
     <header>
       <div class="logo">
@@ -222,28 +219,14 @@
         </div>
 
         <div class="price-summary">
-          <div class="price-item">
-            <span>Base compression:</span>
-            <span id="basePrice">$1.99</span>
-          </div>
-          <div class="price-item">
-            <span>Priority Processing:</span>
-            <span id="priorityPrice">$0.00</span>
-          </div>
-          <div class="price-item">
-            <span>Transcript:</span>
-            <span id="transcriptPrice">$0.00</span>
-          </div>
-          <div class="price-item">
-            <span>Estimated tax (10%):</span>
-            <span id="taxAmount">$0.00</span>
-          </div>
-          <div class="price-total">
-            <span>Total:</span>
-            <span id="totalAmount">$1.99</span>
-          </div>
+          <div class="price-item"><span>Base compression:</span><span id="basePrice">$1.99</span></div>
+          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
+          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
+          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
+          <div class="price-total"><span>Total:</span><span id="totalAmount">$1.99</span></div>
         </div>
 
+        <!-- Ad slot container; script.js will render the <ins> if Ads are enabled -->
         <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="{{ adsense_sidebar_slot }}">
           <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
@@ -251,52 +234,7 @@
     </div>
   </div>
 
-  <!-- Core app JS always loads; do not couple to ads/analytics -->
-  <script>
-    // One-shot backup kick: if we returned from Stripe (paid=1),
-    // ask the server to start the job in case the webhook missed.
-    (function () {
-      try {
-        const root = document.getElementById('pageRoot');
-        const paid = root && root.dataset.paid === '1';
-        const jobId = root && root.dataset.jobId;
-        if (paid && jobId) {
-          fetch(`/start/${jobId}`, { method: 'POST' }).catch(() => {});
-        }
-      } catch (e) {}
-    })();
-  </script>
+  <!-- Core app JS (handles GA + Ads init; no inline JS anywhere) -->
   <script defer src="/static/script.js?v=2025-08-14-7"></script>
-
-  <!-- Defer ad rendering until idle; wrapped in try/catch; safe if blocked -->
-  <script>
-    (function hydrateAdsWhenIdle(){
-      var start = function(){
-        try {
-          var el = document.getElementById('ad-slot-sidebar');
-          if (!el) return;
-          var slot = el.getAttribute('data-ad-slot') || '';
-          // Build the ins element only at idle time
-          var ins = document.createElement('ins');
-          ins.className = 'adsbygoogle';
-          ins.style.display = 'block';
-          ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
-          ins.setAttribute('data-ad-slot', slot);
-          ins.setAttribute('data-full-width-responsive','true');
-          el.innerHTML = '';
-          el.appendChild(ins);
-          // If ads script loaded, this will request an ad; if blocked, the shim is a no-op.
-          (window.adsbygoogle = window.adsbygoogle || []).push({});
-        } catch(_e) {
-          /* swallow any ad-related errors */
-        }
-      };
-      if ('requestIdleCallback' in window) {
-        requestIdleCallback(start, { timeout: 2000 });
-      } else {
-        setTimeout(start, 500);
-      }
-    })();
-  </script>
 </body>
 </html>
