@@ -130,11 +130,26 @@
           </tbody>
         </table>
         <p class="file-meta">Optional add-ons: Priority (+$0.75), Transcript (+$1.50). Tax calculated at checkout.</p>
-        <div id="ad-slot-sidebar" class="w-full rounded-2xl shadow-sm p-4 border bg-white" style="min-height:180px;margin-top:15px;" data-ad-slot="sidebar-300x250">
-          <div class="text-sm text-gray-500">Sponsored • placeholder</div>
+        <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="sidebar-300x250">
+          <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
       </aside>
     </div>
   </div>
+  <script>
+    if (window.adsbygoogle) {
+      const el = document.getElementById('ad-slot-sidebar');
+      if (el){
+        const ins = document.createElement('ins');
+        ins.className = 'adsbygoogle';
+        ins.style.display = 'block';
+        ins.setAttribute('data-ad-client', '{{ adsense_client_id }}');
+        ins.setAttribute('data-ad-slot', 'sidebar-300x250');
+        ins.setAttribute('data-full-width-responsive', 'true');
+        el.innerHTML = ''; el.appendChild(ins);
+        (adsbygoogle = window.adsbygoogle || []).push({});
+      }
+    }
+  </script>
 </body>
 </html>
