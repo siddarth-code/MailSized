@@ -1,11 +1,14 @@
 /* app/static/script.js */
-/* MailSized script • v7.3 (adds startJobOnce + resilient SSE) */
+/* MailSized script • v7.3
+   - no-inline GA + AdSense init (CSP safe)
+   - robust upload progress + SSE
+*/
 
 const $  = (id) => document.getElementById(id);
 const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-/* ---------- formatters ---------- */
+/* ---------- tiny utils ---------- */
 function fmtBytes(n){
   if(!Number.isFinite(n)) return "0 B";
   if(n < 1024) return `${n} B`;
@@ -26,9 +29,8 @@ function setStep(active){
 
 /* ---------- pricing (provider + size tiers) ---------- */
 const BYTES_MB = 1024*1024;
-const T1_MAX = 500*BYTES_MB;      // 0–500 MB
-const T2_MAX = 1024*BYTES_MB;     // 501 MB–1 GB
-// 1.01–2 GB => tier 3 (backend caps 2 GB)
+const T1_MAX = 500*BYTES_MB;  // 0–500 MB
+const T2_MAX = 1024*BYTES_MB; // 501 MB–1 GB (1.01–2 GB => tier 3)
 
 function tierFromSize(bytes){
   if(bytes <= T1_MAX) return 1;
@@ -132,13 +134,11 @@ async function handleFile(file){
   setTextSafe($("fileDuration"), "probing…");
   if($("fileInfo")) $("fileInfo").style.display="";
 
-  // Build form
   const fd = new FormData();
   fd.append("file", file);
   const emailVal = $("userEmail")?.value?.trim();
   if(emailVal) fd.append("email", emailVal);
 
-  // Use XHR for upload progress with robust fallback for non-computable totals
   let heartbeat;
   const uploadRes = await new Promise((resolve, reject)=>{
     const xhr = new XMLHttpRequest();
@@ -259,22 +259,6 @@ function wireCheckout(){
   });
 }
 
-/* ---------- job kick (NEW) ---------- */
-// Ensure the compression job starts one time per jobId (even if the webhook is slow).
-function startJobOnce(jobId) {
-  if (!jobId) return;
-  const key = `job-started:${jobId}`;
-  if (sessionStorage.getItem(key)) return;
-
-  fetch(`/start/${encodeURIComponent(jobId)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    keepalive: true,                 // lets it finish during navigations
-  }).catch(()=>{ /* ignore */ });
-
-  sessionStorage.setItem(key, "1");
-}
-
 /* ---------- resume & SSE ---------- */
 function resumeIfPaid(){
   const root = $("pageRoot");
@@ -286,9 +270,6 @@ function resumeIfPaid(){
   const jobId = url.searchParams.get("job_id") || dsJob;
 
   if(!paid || !jobId) return;
-
-  // NEW: kick the job before we subscribe to events
-  startJobOnce(jobId);
 
   const post = $("postPaySection");
   if(post) post.style.display = "";
@@ -302,7 +283,7 @@ function revealDownload(url){
   const emailNote = $("emailNote");
   if(!url || !dlLink || !dlSection) return;
   dlLink.href = url;
-  dlSection.style.display = "block";
+  dlSection.style.display = "block"; // override CSS
   if(emailNote) emailNote.style.display = "";
   setStep(3);
   setTextSafe($("progressNote"), "Complete");
@@ -313,12 +294,8 @@ function startSSE(jobId){
   const fillEl= $("progressFill");
   const noteEl= $("progressNote");
 
-  let attempts = 0;
-  const maxAttempts = 5;
-
-  const connect = () => {
+  try{
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
-
     es.onmessage = async (evt)=>{
       let data={}; try{ data = JSON.parse(evt.data||"{}"); }catch{}
 
@@ -350,20 +327,8 @@ function startSSE(jobId){
         if(noteEl) noteEl.textContent = "Error";
       }
     };
-
-    es.onerror = ()=>{
-      // Retry with gentle backoff (handles transient proxies, etc.)
-      es.close();
-      attempts += 1;
-      if (attempts <= maxAttempts) {
-        setTimeout(connect, Math.min(1000 * attempts, 5000));
-      } else {
-        showError("Connection to progress stream lost. Please refresh the page.");
-      }
-    };
-  };
-
-  connect();
+    es.onerror = ()=>{/* heartbeats keep it alive */};
+  }catch{/* noop */}
 }
 
 /* ---------- errors ---------- */
@@ -378,6 +343,52 @@ function hideError(){
   if(box) box.style.display = "none";
 }
 
+/* ---------- GA (no inline; CSP safe) ---------- */
+function initGA(){
+  const gaId = $("pageRoot")?.getAttribute("data-ga-id"); // put GA ID on <body>
+  if(!gaId) return; // not configured
+  // Define gtag safely in external JS
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = function(){ window.dataLayer.push(arguments); };
+  // If gtag.js already loaded, this will apply; if not, it will buffer
+  window.gtag('js', new Date());
+  window.gtag('config', gaId);
+}
+
+/* ---------- AdSense (no inline; CSP safe; adblock resilient) ---------- */
+function initAds(){
+  const client = $("pageRoot")?.getAttribute("data-adsense-client");
+  if(!client) return; // ads disabled/not configured
+
+  // Ensure the script is loaded once
+  if(document.querySelector('script[data-adsbygoogle]')) return;
+
+  const s = document.createElement("script");
+  s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(client)}`;
+  s.async = true;
+  s.crossOrigin = "anonymous";
+  s.setAttribute("data-adsbygoogle", "1");
+
+  s.addEventListener("load", ()=>{
+    // Find any .ad-slot containers with data-ad-slot and render
+    qsa(".ad-slot[data-ad-slot]").forEach((host)=>{
+      host.innerHTML = ""; // clear placeholder
+      const ins = document.createElement("ins");
+      ins.className = "adsbygoogle";
+      ins.style.display = "block";
+      ins.setAttribute("data-ad-client", client);
+      ins.setAttribute("data-ad-slot", host.getAttribute("data-ad-slot") || "");
+      ins.setAttribute("data-full-width-responsive", "true");
+      host.appendChild(ins);
+      try{ (window.adsbygoogle = window.adsbygoogle || []).push({}); }catch{ /* adblock or CSP -> ignore */ }
+    });
+  });
+
+  s.addEventListener("error", ()=>{ /* adblock or network – ignore entirely */ });
+
+  document.head.appendChild(s);
+}
+
 /* ---------- boot ---------- */
 document.addEventListener("DOMContentLoaded", ()=>{
   wireUpload();
@@ -385,4 +396,8 @@ document.addEventListener("DOMContentLoaded", ()=>{
   wireCheckout();
   calcTotals();
   resumeIfPaid();
+
+  // Initialize GA/Ads after DOM (CSP-safe, no inline)
+  initGA();
+  initAds();
 });
