@@ -16,4 +16,3 @@ def test_choose_target_case_insensitive():
     large = 30 * 1024 * 1024  # 30MB, above Gmail cap
     expected = int((25 - 1.5) * 1024 * 1024)
     assert choose_target("Gmail", large) == expected
-

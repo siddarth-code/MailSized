@@ -27,7 +27,12 @@ async def test_cleanup_job_removes_files():
         width=0,
         height=0,
     )
-    job = app_module.JobState(job_id="cleanup-test", upload=upload, out_path=Path(path_out), status=app_module.JobStatus.DONE)
+    job = app_module.JobState(
+        job_id="cleanup-test",
+        upload=upload,
+        out_path=Path(path_out),
+        status=app_module.JobStatus.DONE,
+    )
     app_module.UPLOADS[upload.upload_id] = upload
     app_module.JOBS[job.job_id] = job
 
@@ -38,4 +43,3 @@ async def test_cleanup_job_removes_files():
     assert not os.path.exists(path_out)
     assert job.job_id not in app_module.JOBS
     assert upload.upload_id not in app_module.UPLOADS
-

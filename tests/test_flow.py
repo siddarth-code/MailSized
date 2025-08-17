@@ -15,16 +15,30 @@ async def test_full_happy_flow(monkeypatch):
 
     async def fake_send_email(to, url):
         pass
+
     monkeypatch.setattr(app_module, "send_email", fake_send_email)
 
     async def fake_run_job(job):
         job.status = app_module.JobStatus.RUNNING
-        app_module.put(job, type="progress", progress=50, status=app_module.JobStatus.RUNNING, message="Halfway")
+        app_module.put(
+            job,
+            type="progress",
+            progress=50,
+            status=app_module.JobStatus.RUNNING,
+            message="Halfway",
+        )
         out_path = app_module.OUTPUT_DIR / f"{job.job_id}.mp4"
         out_path.write_bytes(b"compressed")
         job.out_path = out_path
         job.status = app_module.JobStatus.DONE
-        app_module.put(job, type="state", status=app_module.JobStatus.DONE, progress=100, message="Complete", download_url=f"{app_module.PUBLIC_BASE_URL}/media/{out_path.name}")
+        app_module.put(
+            job,
+            type="state",
+            status=app_module.JobStatus.DONE,
+            progress=100,
+            message="Complete",
+            download_url=f"{app_module.PUBLIC_BASE_URL}/media/{out_path.name}",
+        )
         asyncio.create_task(app_module._schedule_cleanup(job.job_id))
 
     monkeypatch.setattr(app_module, "run_job", fake_run_job)
@@ -69,4 +83,3 @@ async def test_full_happy_flow(monkeypatch):
 
         await asyncio.sleep(1)
         assert job_id not in app_module.JOBS
-

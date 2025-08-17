@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 from app import main as app_module
-from app.main import app, MAX_DURATION_SEC
+from app.main import app
 
 
 @pytest.mark.asyncio
