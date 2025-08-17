@@ -462,7 +462,16 @@ def contact_get(request: Request):
     sent = request.query_params.get("sent") == "1"
     ctx = _adsense_context()
     return template.render(**ctx, sent=sent)
+    
+@app.get("/blogs", response_class=HTMLResponse)
+def blogs_index():
+    template = env.get_template("blogs.html")
+    return template.render()
 
+@app.get("/blog/meet-mailsized", response_class=HTMLResponse)
+def blog_meet_mailsized():
+    template = env.get_template("blog-meet-mailsized.html")
+    return template.render()
 
 @app.post("/contact")
 async def contact_post(
