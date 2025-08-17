@@ -159,8 +159,14 @@
           <div class="price-total"><span>Total:</span><span id="totalAmount">$1.99</span></div>
         </div>
 
-        <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="sidebar-300x250">
-          <div class="ad-placeholder">Sponsored • placeholder</div>
+      <div class="ad-slot">
+  <!-- Sidebar unit -->
+          <ins class="adsbygoogle"
+               style="display:block"
+               data-ad-client="{{ adsense_client_id }}"
+               data-ad-slot="{{ adsense_sidebar_slot }}"
+               data-ad-format="auto"
+               data-full-width-responsive="true"></ins>
         </div>
       </div>
     </div>
@@ -169,20 +175,9 @@
   <script defer src="/static/script.js?v=2025-08-14-7"></script>
 
   <!-- Ad slot initializer (inline) — allowed by CSP via nonce -->
-  <script nonce="{{ csp_nonce }}">
-    if (window.adsbygoogle) {
-      const slots=[{id:'ad-slot-sidebar',slot:'sidebar-300x250'}];
-      slots.forEach(s=>{
-        const el=document.getElementById(s.id); if(!el) return;
-        const ins=document.createElement('ins');
-        ins.className='adsbygoogle'; ins.style.display='block';
-        ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
-        ins.setAttribute('data-ad-slot',s.slot);
-        ins.setAttribute('data-full-width-responsive','true');
-        el.innerHTML=''; el.appendChild(ins);
-        (adsbygoogle=window.adsbygoogle||[]).push({});
-      });
-    }
-  </script>
+ <script nonce="{{ csp_nonce }}">
+  (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+  
 </body>
 </html>
