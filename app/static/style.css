@@ -424,3 +424,20 @@ header p{
   background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
   border-radius: 10px; font-size: 14px;
 }
+/* ---- blog styles (lightweight; non-intrusive) ---- */
+.blog-card{
+  border:1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}
+.blog-card__title{ margin: 0 0 6px; font-size: 18px; }
+.blog-card__meta{ color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.blog-card__excerpt{ color: var(--text); margin-bottom: 10px; }
+
+.blog-post__title{ margin:0 0 6px; }
+.blog-post__meta{ color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.blog-post__body hr{ border:0; border-top:1px solid var(--border); margin:16px 0; }
+.blog-post ul, .blog-post ol{ margin: 6px 0 12px 20px; }
