@@ -120,6 +120,9 @@ header p{
   border-radius:var(--radius);
   background:var(--card);
   box-shadow:var(--shadow);
+  /* Ensure ad content doesn't overlap pricing details */
+  position:relative;
+  overflow:hidden;
 }
 .ad-placeholder{
   font-size:13px;
