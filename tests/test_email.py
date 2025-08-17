@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +35,7 @@ async def test_send_email_sets_headers(monkeypatch):
 
         def send_message(self, message):
             # Capture the message for inspection
-            recorded['message'] = message
+            recorded["message"] = message
 
         def __enter__(self):
             return self
@@ -49,9 +48,8 @@ async def test_send_email_sets_headers(monkeypatch):
     await app_module.send_email("recipient@example.com", "http://download")
 
     # Ensure a message was recorded
-    assert 'message' in recorded
-    msg = recorded['message']
+    assert "message" in recorded
+    msg = recorded["message"]
     assert msg["Auto-Submitted"] == "auto-generated"
     assert msg["X-Auto-Response-Suppress"] == "All"
     assert msg["Reply-To"] == "no-reply@mailsized.com"
-

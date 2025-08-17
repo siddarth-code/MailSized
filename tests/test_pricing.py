@@ -1,5 +1,3 @@
-import pytest
-
 from app.main import compute_order_total_cents
 
 
