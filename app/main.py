@@ -414,26 +414,41 @@ async def send_email(to_email: str, download_url: str) -> None:
     await asyncio.to_thread(send_email_download, to_email, download_url)
 
 
-# ------------ Security headers ------------
+# ------------ Security headers (updated for GA/AdSense) ------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
+
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    # CSP: allow GA/AdSense when present; still safe if blocked
-    resp.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "img-src 'self' data: https:; "
-        "media-src 'self'; "
-        "font-src 'self' https://cdnjs.cloudflare.com; "
-        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com "
-        "https://www.googletagmanager.com https://www.google-analytics.com "
-        "https://pagead2.googlesyndication.com https://www.googletagservices.com "
-        "https://googleads.g.doubleclick.net; "
-        "connect-src 'self' https://www.google-analytics.com;"
-    )
+
+    # CSP: strong defaults + explicit allowlists for GA/AdSense and CDN assets.
+    # Note: ad blockers may still block these requests on the client; that's expected.
+    csp = [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        # images used by GA/Ads plus data: URIs for inline icons
+        "img-src 'self' data: https://www.google-analytics.com https://stats.g.doubleclick.net https://pagead2.googlesyndication.com",
+        # inline styles are needed for your current HTML + FontAwesome CDN
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+        # scripts for your app, Cloudflare CDN, GA/GTAG, and AdSense.
+        # 'unsafe-inline' is included to allow your tiny inline bootstraps;
+        # if you later move those into external files, you can remove it.
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://pagead2.googlesyndication.com",
+        # fonts from CDNJS
+        "font-src 'self' https://cdnjs.cloudflare.com",
+        # connections used by GA measurement endpoints and SSE (/events/*)
+        "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://stats.g.doubleclick.net",
+        # ad iframes
+        "frame-src https://googleads.g.doubleclick.net https://tpc.googlesyndication.com",
+        # media files you serve back
+        "media-src 'self'",
+        # allow the AdSense/GTAG workers in some browsers
+        "worker-src 'self' blob:",
+    ]
+    resp.headers["Content-Security-Policy"] = "; ".join(csp)
     return resp
 
 
