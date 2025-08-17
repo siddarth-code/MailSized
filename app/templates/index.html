@@ -1,51 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- --- Analytics (bulletproof + CSP friendly) --- -->
+  <!-- Performance hints for GA/Ads -->
+  <link rel="preconnect" href="https://www.googletagmanager.com" crossorigin>
+  <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
+  <link rel="dns-prefetch" href="//www.googletagmanager.com">
+  <link rel="dns-prefetch" href="//pagead2.googlesyndication.com">
+
+  <!-- Google Analytics (gtag) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-S5S8LF8NDE"></script>
+  <script>
+    /* kept minimal on purpose; CSP allows this inline bootstrap */
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){ dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-S5S8LF8NDE');
+  </script>
+
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta http-equiv="Cache-Control" content="no-store"/>
   <title>MailSized – Send Large Videos via Email</title>
 
-  <!-- Font Awesome + CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
 
-  <!-- AdSense loader tag injected from server (already async) -->
   {{ adsense_tag|safe }}
-
-  <!-- Provide safe no-op shims BEFORE any ad/analytics usage so the page never crashes -->
-  <script>
-    // No-op gtag shim (prevents ReferenceError if gtag.js is blocked)
-    (function () {
-      if (!window.dataLayer) window.dataLayer = [];
-      if (!window.gtag) {
-        window.gtag = function(){ window.dataLayer.push(arguments); };
-      }
-    })();
-
-    // No-op AdSense shim (so code can safely call push even if ads script is blocked)
-    (function () {
-      if (!window.adsbygoogle) window.adsbygoogle = [];
-      // Override push() with a safe stub that never throws
-      try {
-        if (!Array.isArray(window.adsbygoogle)) {
-          window.adsbygoogle = [];
-        }
-        if (typeof window.adsbygoogle.push !== 'function') {
-          window.adsbygoogle.push = function(){ /* no-op */ };
-        }
-      } catch(_e){}
-    })();
-  </script>
-
-  <!-- Load GA after shims; if blocked, shims keep the page stable -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-S5S8LF8NDE"></script>
-  <script>
-    // If GA loads, this will send events; if blocked, it's harmless.
-    gtag('js', new Date());
-    gtag('config', 'G-S5S8LF8NDE');
-  </script>
 </head>
 
 <body id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id }}">
