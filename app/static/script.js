@@ -1,7 +1,8 @@
 /* app/static/script.js */
-/* MailSized script • v7.3
-   - no-inline GA + AdSense init (CSP safe)
-   - robust upload progress + SSE
+/* MailSized script • v7.4
+   - webhook-safe job start (client kicker)
+   - ad hydration tolerant to ad blockers
+   - CSP-safe GA (no inline)
 */
 
 const $  = (id) => document.getElementById(id);
@@ -259,7 +260,14 @@ function wireCheckout(){
   });
 }
 
-/* ---------- resume & SSE ---------- */
+/* ---------- webhook-safe resume & SSE ---------- */
+async function maybeKickJob(jobId){
+  // Idempotent: backend returns ok whether it was already running or not.
+  try{
+    await fetch(`/start/${encodeURIComponent(jobId)}`, { method: "POST" });
+  }catch{/* ignore */}
+}
+
 function resumeIfPaid(){
   const root = $("pageRoot");
   const dsPaid = root?.getAttribute("data-paid")==="1";
@@ -274,6 +282,10 @@ function resumeIfPaid(){
   const post = $("postPaySection");
   if(post) post.style.display = "";
   setStep(2);
+
+  // NEW: ensure the job starts even if the Stripe webhook is delayed/missed.
+  maybeKickJob(jobId);
+
   startSSE(jobId);
 }
 
@@ -345,47 +357,61 @@ function hideError(){
 
 /* ---------- GA (no inline; CSP safe) ---------- */
 function initGA(){
-  const gaId = $("pageRoot")?.getAttribute("data-ga-id"); // put GA ID on <body>
-  if(!gaId) return; // not configured
-  // Define gtag safely in external JS
+  // If you want, put GA id on <body data-ga-id="G-XXXX">; otherwise this safely no-ops.
+  const gaId = $("pageRoot")?.getAttribute("data-ga-id");
+  if(!gaId) return;
   window.dataLayer = window.dataLayer || [];
   window.gtag = function(){ window.dataLayer.push(arguments); };
-  // If gtag.js already loaded, this will apply; if not, it will buffer
   window.gtag('js', new Date());
   window.gtag('config', gaId);
 }
 
-/* ---------- AdSense (no inline; CSP safe; adblock resilient) ---------- */
-function initAds(){
-  const client = $("pageRoot")?.getAttribute("data-adsense-client");
-  if(!client) return; // ads disabled/not configured
+/* ---------- AdSense hydration (adblock-resilient) ---------- */
+function hydrateAdsNow(){
+  // Works whether the ads script was loaded by template or not.
+  const slotEl = $("ad-slot-sidebar");
+  if(!slotEl) return;
 
-  // Ensure the script is loaded once
-  if(document.querySelector('script[data-adsbygoogle]')) return;
+  // Prefer client from the slot; fall back to body attribute.
+  const client = slotEl.getAttribute("data-ad-client") || $("pageRoot")?.getAttribute("data-adsense-client") || "";
+  const slot   = slotEl.getAttribute("data-ad-slot") || "";
+  if(!client || !slot) return;
 
+  // If ad runtime missing (e.g., blocked), just leave placeholder silently.
+  if (typeof window.adsbygoogle === "undefined") return;
+
+  slotEl.innerHTML = "";
+  const ins = document.createElement("ins");
+  ins.className = "adsbygoogle";
+  ins.style.display = "block";
+  ins.setAttribute("data-ad-client", client);
+  ins.setAttribute("data-ad-slot", slot);
+  ins.setAttribute("data-full-width-responsive", "true");
+  slotEl.appendChild(ins);
+
+  try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch(_) {}
+}
+
+function ensureAdsScriptThenHydrate(){
+  // If runtime already present (template included it), just hydrate.
+  if (typeof window.adsbygoogle !== "undefined") {
+    hydrateAdsNow();
+    return;
+  }
+
+  // Otherwise, try to load it ourselves if we have a client id.
+  const slotEl = $("ad-slot-sidebar");
+  const client = slotEl?.getAttribute("data-ad-client") || $("pageRoot")?.getAttribute("data-adsense-client") || "";
+  if(!client) return;
+
+  if(document.querySelector('script[data-adsbygoogle]')) return; // already loading
   const s = document.createElement("script");
   s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(client)}`;
   s.async = true;
   s.crossOrigin = "anonymous";
-  s.setAttribute("data-adsbygoogle", "1");
-
-  s.addEventListener("load", ()=>{
-    // Find any .ad-slot containers with data-ad-slot and render
-    qsa(".ad-slot[data-ad-slot]").forEach((host)=>{
-      host.innerHTML = ""; // clear placeholder
-      const ins = document.createElement("ins");
-      ins.className = "adsbygoogle";
-      ins.style.display = "block";
-      ins.setAttribute("data-ad-client", client);
-      ins.setAttribute("data-ad-slot", host.getAttribute("data-ad-slot") || "");
-      ins.setAttribute("data-full-width-responsive", "true");
-      host.appendChild(ins);
-      try{ (window.adsbygoogle = window.adsbygoogle || []).push({}); }catch{ /* adblock or CSP -> ignore */ }
-    });
-  });
-
-  s.addEventListener("error", ()=>{ /* adblock or network – ignore entirely */ });
-
+  s.setAttribute("data-adsbygoogle","1");
+  s.addEventListener("load", hydrateAdsNow);
+  s.addEventListener("error", ()=>{/* blocked -> no-op */});
   document.head.appendChild(s);
 }
 
@@ -397,7 +423,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
   calcTotals();
   resumeIfPaid();
 
-  // Initialize GA/Ads after DOM (CSP-safe, no inline)
+  // Optional: initialize analytics and ads (both CSP-safe; both no-op if disabled/blocked)
   initGA();
-  initAds();
+  ensureAdsScriptThenHydrate();
 });
