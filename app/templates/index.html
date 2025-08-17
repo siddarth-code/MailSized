@@ -1,27 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- --- Analytics (bulletproof + CSP friendly) --- -->
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta http-equiv="Cache-Control" content="no-store"/>
   <title>MailSized – Send Large Videos via Email</title>
 
+  <!-- Font Awesome + CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
 
-  <!-- Google Analytics (allowed by CSP via nonce & host allowlist) -->
-  {% if GA_ID %}
-    <script async nonce="{{ csp_nonce }}" src="https://www.googletagmanager.com/gtag/js?id={{ GA_ID }}"></script>
-    <script nonce="{{ csp_nonce }}">
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', '{{ GA_ID }}', { 'anonymize_ip': true });
-    </script>
-  {% endif %}
-
-  <!-- AdSense async (nonce injected server-side) -->
+  <!-- AdSense loader tag injected from server (already async) -->
   {{ adsense_tag|safe }}
+
+  <!-- Provide safe no-op shims BEFORE any ad/analytics usage so the page never crashes -->
+  <script>
+    // No-op gtag shim (prevents ReferenceError if gtag.js is blocked)
+    (function () {
+      if (!window.dataLayer) window.dataLayer = [];
+      if (!window.gtag) {
+        window.gtag = function(){ window.dataLayer.push(arguments); };
+      }
+    })();
+
+    // No-op AdSense shim (so code can safely call push even if ads script is blocked)
+    (function () {
+      if (!window.adsbygoogle) window.adsbygoogle = [];
+      // Override push() with a safe stub that never throws
+      try {
+        if (!Array.isArray(window.adsbygoogle)) {
+          window.adsbygoogle = [];
+        }
+        if (typeof window.adsbygoogle.push !== 'function') {
+          window.adsbygoogle.push = function(){ /* no-op */ };
+        }
+      } catch(_e){}
+    })();
+  </script>
+
+  <!-- Load GA after shims; if blocked, shims keep the page stable -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-S5S8LF8NDE"></script>
+  <script>
+    // If GA loads, this will send events; if blocked, it's harmless.
+    gtag('js', new Date());
+    gtag('config', 'G-S5S8LF8NDE');
+  </script>
 </head>
 
 <body id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id }}">
@@ -36,17 +60,24 @@
         <div class="constraint"><i class="fas fa-file"></i><span>≤2GB files</span></div>
         <div class="constraint"><i class="fas fa-clock"></i><span>≤20 min videos</span></div>
       </div>
+
+      <!-- Top Navigation -->
       <nav class="top-nav" aria-label="Main">
-        <a href="/" class="top-nav-link">Home</a><span class="sep">|</span>
-        <a href="/how-it-works" class="top-nav-link">How it Works</a><span class="sep">|</span>
-        <a href="/blogs" class="top-nav-link">Blogs</a><span class="sep">|</span>
-        <a href="/privacy" class="top-nav-link">Privacy</a><span class="sep">|</span>
+        <a href="/" class="top-nav-link">Home</a>
+        <span class="sep">|</span>
+        <a href="/how-it-works" class="top-nav-link">How it Works</a>
+        <span class="sep">|</span>
+        <a href="/blogs" class="top-nav-link">Blogs</a>
+        <span class="sep">|</span>
+        <a href="/privacy" class="top-nav-link">Privacy</a>
+        <span class="sep">|</span>
         <a href="/contact" class="top-nav-link">Contact Us</a>
       </nav>
     </header>
 
     <div class="card-container">
       <div class="main-card">
+        <!-- Steps -->
         <div class="steps">
           <div id="step1" class="step active">1. Upload</div>
           <div id="step2" class="step">2. Payment</div>
@@ -54,8 +85,11 @@
           <div id="step4" class="step">4. Download</div>
         </div>
 
+        <!-- Content -->
         <div class="step-content">
           <h2 class="step-title"><i class="fas fa-cloud-upload-alt"></i> 1. Upload Your Video</h2>
+
+          <!-- Upload area -->
           <div class="upload-area" id="uploadArea" tabindex="0">
             <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
             <h3>Click to browse or drag &amp; drop your video</h3>
@@ -64,17 +98,22 @@
             <input type="file" id="fileInput" accept="video/*" style="display:none;">
           </div>
 
+          <!-- Upload progress -->
           <div class="progress-container" id="uploadProgress" style="display:none; margin-top:12px;">
             <div class="progress-fill" id="uploadFill" style="width:0%;"></div>
             <div class="progress-pct" id="uploadPct">0%</div>
           </div>
           <div class="progress-note" id="uploadNote" style="display:none;">Uploading…</div>
 
+          <!-- Selected file details -->
           <div class="file-info" id="fileInfo" style="display:none;">
             <div class="file-icon"><i class="fas fa-file-video"></i></div>
             <div class="file-details">
               <div class="file-name" id="fileName"></div>
-              <div class="file-meta"><span id="fileSize"></span><span id="fileDuration"></span></div>
+              <div class="file-meta">
+                <span id="fileSize"></span>
+                <span id="fileDuration"></span>
+              </div>
             </div>
             <button class="remove-file" id="removeFile" type="button"><i class="fas fa-times"></i></button>
           </div>
@@ -84,24 +123,43 @@
             <button class="provider-card gmail selected" data-provider="gmail" type="button">
               <div class="provider-icon"><i class="fab fa-google"></i></div>
               <div class="provider-name">Gmail</div>
-              <div class="provider-details"><div>Max attachment: 25MB</div><div class="provider-price">Targets ≤25MB</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 25MB</div>
+                <div class="provider-price">Targets ≤25MB</div>
+              </div>
             </button>
+
             <button class="provider-card outlook" data-provider="outlook" type="button">
               <div class="provider-icon"><i class="fab fa-microsoft"></i></div>
               <div class="provider-name">Outlook</div>
-              <div class="provider-details"><div>Max attachment: 20MB</div><div class="provider-price">Targets ≤20MB</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 20MB</div>
+                <div class="provider-price">Targets ≤20MB</div>
+              </div>
             </button>
+
             <button class="provider-card other" data-provider="other" type="button">
               <div class="provider-icon"><i class="fas fa-envelope"></i></div>
               <div class="provider-name">Other</div>
-              <div class="provider-details"><div>Max attachment: 15MB</div><div class="provider-price">Targets ≤15MB</div></div>
+              <div class="provider-details">
+                <div>Max attachment: 15MB</div>
+                <div class="provider-price">Targets ≤15MB</div>
+              </div>
             </button>
           </div>
 
           <h2 class="step-title"><i class="fas fa-star"></i> 3. Add Extras</h2>
           <div class="extras">
-            <label class="extra-option"><input type="checkbox" id="priority"><span class="extra-label">Priority Processing</span><span class="extra-price">+ $0.75</span></label>
-            <label class="extra-option"><input type="checkbox" id="transcript"><span class="extra-label">Video Transcript</span><span class="extra-price">+ $1.50</span></label>
+            <label class="extra-option">
+              <input type="checkbox" id="priority">
+              <span class="extra-label">Priority Processing</span>
+              <span class="extra-price">+ $0.75</span>
+            </label>
+            <label class="extra-option">
+              <input type="checkbox" id="transcript">
+              <span class="extra-label">Video Transcript</span>
+              <span class="extra-price">+ $1.50</span>
+            </label>
           </div>
 
           <div class="email-input">
@@ -110,11 +168,16 @@
           </div>
 
           <div class="payment-agreement">
-            <label><input type="checkbox" id="agree"> I agree to the <a href="/terms" class="terms-link" target="_blank" rel="noopener">Terms &amp; Conditions</a> (service is non-refundable)</label>
+            <label>
+              <input type="checkbox" id="agree">
+              I agree to the <a href="/terms" class="terms-link" target="_blank" rel="noopener">Terms &amp; Conditions</a> (service is non-refundable)
+            </label>
           </div>
 
           <div class="error-container" id="errorContainer" style="display:none;">
-            <div class="error-title"><i class="fas fa-exclamation-circle"></i><span>Error</span></div>
+            <div class="error-title">
+              <i class="fas fa-exclamation-circle"></i><span>Error</span>
+            </div>
             <div id="errorMessage"></div>
           </div>
 
@@ -122,6 +185,7 @@
             <i class="fas fa-credit-card"></i> Pay &amp; Compress
           </button>
 
+          <!-- Post-payment: progress + download -->
           <div id="postPaySection" style="display:none; margin-top:16px;">
             <div class="progress-container">
               <div class="progress-fill" id="progressFill" style="width:0%;"></div>
@@ -133,51 +197,112 @@
               <a id="downloadLink" class="action-button" href="#" download>
                 <i class="fas fa-download"></i> Download Compressed Video
               </a>
-              <p id="emailNote" style="display:none; margin-top:8px; font-size:0.9rem; color:#4a5568;">We’ve also emailed your file. Link expires in ~24 hours.</p>
+              <p id="emailNote" style="display:none; margin-top:8px; font-size:0.9rem; color:#4a5568;">
+                We’ve also emailed your file. Link expires in ~24 hours.
+              </p>
             </div>
           </div>
         </div>
       </div>
 
+      <!-- Pricing -->
       <div class="info-card">
         <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
         <div class="pricing-table-wrapper">
           <table class="pricing-table">
-            <thead><tr><th>File size</th><th>Gmail</th><th>Outlook</th><th>Other</th></tr></thead>
+            <thead>
+              <tr>
+                <th>File size</th>
+                <th>Gmail</th>
+                <th>Outlook</th>
+                <th>Other</th>
+              </tr>
+            </thead>
             <tbody>
-              <tr><td>0–500 MB</td><td>$1.99</td><td>$2.19</td><td>$2.49</td></tr>
-              <tr><td>501 MB–1 GB</td><td>$2.99</td><td>$3.29</td><td>$3.99</td></tr>
-              <tr><td>1.01–2 GB</td><td>$4.49</td><td>$4.99</td><td>$5.49</td></tr>
+              <tr>
+                <td>0–500 MB</td>
+                <td>$1.99</td>
+                <td>$2.19</td>
+                <td>$2.49</td>
+              </tr>
+              <tr>
+                <td>501 MB–1 GB</td>
+                <td>$2.99</td>
+                <td>$3.29</td>
+                <td>$3.99</td>
+              </tr>
+              <tr>
+                <td>1.01–2 GB</td>
+                <td>$4.49</td>
+                <td>$4.99</td>
+                <td>$5.49</td>
+              </tr>
             </tbody>
           </table>
         </div>
+
         <div class="price-summary">
-          <div class="price-item"><span>Base compression:</span><span id="basePrice">$1.99</span></div>
-          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
-          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
-          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
-          <div class="price-total"><span>Total:</span><span id="totalAmount">$1.99</span></div>
+          <div class="price-item">
+            <span>Base compression:</span>
+            <span id="basePrice">$1.99</span>
+          </div>
+          <div class="price-item">
+            <span>Priority Processing:</span>
+            <span id="priorityPrice">$0.00</span>
+          </div>
+          <div class="price-item">
+            <span>Transcript:</span>
+            <span id="transcriptPrice">$0.00</span>
+          </div>
+          <div class="price-item">
+            <span>Estimated tax (10%):</span>
+            <span id="taxAmount">$0.00</span>
+          </div>
+          <div class="price-total">
+            <span>Total:</span>
+            <span id="totalAmount">$1.99</span>
+          </div>
         </div>
 
-      <div class="ad-slot">
-  <!-- Sidebar unit -->
-          <ins class="adsbygoogle"
-               style="display:block"
-               data-ad-client="{{ adsense_client_id }}"
-               data-ad-slot="{{ adsense_sidebar_slot }}"
-               data-ad-format="auto"
-               data-full-width-responsive="true"></ins>
+        <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="{{ adsense_sidebar_slot }}">
+          <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Core app JS always loads; do not couple to ads/analytics -->
   <script defer src="/static/script.js?v=2025-08-14-7"></script>
 
-  <!-- Ad slot initializer (inline) — allowed by CSP via nonce -->
- <script nonce="{{ csp_nonce }}">
-  (adsbygoogle = window.adsbygoogle || []).push({});
-</script>
-  
+  <!-- Defer ad rendering until idle; wrapped in try/catch; safe if blocked -->
+  <script>
+    (function hydrateAdsWhenIdle(){
+      var start = function(){
+        try {
+          var el = document.getElementById('ad-slot-sidebar');
+          if (!el) return;
+          var slot = el.getAttribute('data-ad-slot') || '';
+          // Build the ins element only at idle time
+          var ins = document.createElement('ins');
+          ins.className = 'adsbygoogle';
+          ins.style.display = 'block';
+          ins.setAttribute('data-ad-client','{{ adsense_client_id }}');
+          ins.setAttribute('data-ad-slot', slot);
+          ins.setAttribute('data-full-width-responsive','true');
+          el.innerHTML = '';
+          el.appendChild(ins);
+          // If ads script loaded, this will request an ad; if blocked, the shim is a no-op.
+          (window.adsbygoogle = window.adsbygoogle || []).push({});
+        } catch(_e) {
+          /* swallow any ad-related errors */
+        }
+      };
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(start, { timeout: 2000 });
+      } else {
+        setTimeout(start, 500);
+      }
+    })();
+  </script>
 </body>
 </html>
