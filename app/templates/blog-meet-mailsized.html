@@ -8,7 +8,7 @@
   <meta name="description" content="MailSized instantly compresses videos to email-size while keeping quality. Perfect for vloggers, freelancers, and agencies. Pay as you go.">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
-
+  {{ adsense_tag|safe }}
   <!-- BlogPosting structured data for SEO -->
   <script type="application/ld+json">
   {
@@ -32,12 +32,16 @@
           <div class="logo-icon"><i class="fas fa-video"></i></div>
           <h1>MailSized</h1>
         </div>
-        <nav aria-label="Primary">
-          <a href="/" class="constraint">Home</a>
-          <a href="/how-it-works" class="constraint">How it Works</a>
-          <a href="/blogs" class="constraint" aria-current="page">Blogs</a>
-          <a href="/privacy" class="constraint">Privacy</a>
-          <a href="/contact" class="constraint">Contact Us</a>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/" class="top-nav-link">Home</a>
+          <span class="sep">|</span>
+          <a href="/how-it-works" class="top-nav-link">How it Works</a>
+          <span class="sep">|</span>
+          <a href="/blogs" class="top-nav-link" aria-current="page">Blogs</a>
+          <span class="sep">|</span>
+          <a href="/privacy" class="top-nav-link">Privacy</a>
+          <span class="sep">|</span>
+          <a href="/contact" class="top-nav-link">Contact Us</a>
         </nav>
       </div>
       <p>Pay-as-you-go compression for email-ready videos.</p>
