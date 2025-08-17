@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Performance hints for GA/Ads -->
+  <!-- Performance hints for GA/Ads (safe with CSP) -->
   <link rel="preconnect" href="https://www.googletagmanager.com" crossorigin>
   <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
   <link rel="dns-prefetch" href="//www.googletagmanager.com">
   <link rel="dns-prefetch" href="//pagead2.googlesyndication.com">
 
-  <!-- Google Analytics (loader only; bootstrap happens in /static/script.js) -->
+  <!-- Google Analytics (external only; no inline bootstrap) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-S5S8LF8NDE"></script>
 
   <meta charset="utf-8"/>
@@ -17,15 +17,11 @@
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="/static/style.css"/>
+
+  {{ adsense_tag|safe }}
 </head>
 
-<body
-  id="pageRoot"
-  data-paid="{{ '1' if paid else '0' }}"
-  data-job-id="{{ job_id }}"
-  data-ga-id="G-S5S8LF8NDE"
-  data-adsense-client="{{ adsense_client_id }}"
->
+<body id="pageRoot" data-paid="{{ '1' if paid else '0' }}" data-job-id="{{ job_id }}">
   <div class="container">
     <header>
       <div class="logo">
@@ -218,23 +214,20 @@
           </table>
         </div>
 
-        <div class="price-summary">
-          <div class="price-item"><span>Base compression:</span><span id="basePrice">$1.99</span></div>
-          <div class="price-item"><span>Priority Processing:</span><span id="priorityPrice">$0.00</span></div>
-          <div class="price-item"><span>Transcript:</span><span id="transcriptPrice">$0.00</span></div>
-          <div class="price-item"><span>Estimated tax (10%):</span><span id="taxAmount">$0.00</span></div>
-          <div class="price-total"><span>Total:</span><span id="totalAmount">$1.99</span></div>
-        </div>
-
-        <!-- Ad slot container; script.js will render the <ins> if Ads are enabled -->
-        <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="{{ adsense_sidebar_slot }}">
+        <!-- Ad slot: only data-* attributes; JS will hydrate if ads script loaded -->
+        <div
+          id="ad-slot-sidebar"
+          class="ad-slot"
+          data-ad-client="{{ adsense_client_id }}"
+          data-ad-slot="{{ adsense_sidebar_slot }}"
+        >
           <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Core app JS (handles GA + Ads init; no inline JS anywhere) -->
-  <script defer src="/static/script.js?v=2025-08-14-7"></script>
+  <!-- Core app JS (contains resume + job kick + ad hydration) -->
+  <script defer src="/static/script.js?v=2025-08-14-8"></script>
 </body>
 </html>
