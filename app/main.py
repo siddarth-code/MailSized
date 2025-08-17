@@ -44,6 +44,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.security import SecurityMiddleware
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Config
@@ -386,6 +387,41 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
+# --- Security headers (keeps app secure while allowing GA/Ads if enabled) ---
+CSP = (
+    "default-src 'self'; "
+    # Scripts you actually use:
+    "script-src 'self' https://cdnjs.cloudflare.com "
+    "https://www.googletagmanager.com https://www.google-analytics.com "
+    # If you run AdSense, uncomment the next line:
+    # "https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net "
+    "'unsafe-inline'; "
+    # Inline styles in templates + cdn css:
+    "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+    # Images and pixels:
+    "img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com; "
+    # XHR / beacons (GA):
+    "connect-src 'self' https://www.google-analytics.com https://www.googletagmanager.com; "
+    # Fonts:
+    "font-src 'self' data: https://cdnjs.cloudflare.com; "
+    # We redirect to Stripe; if you ever embed stripe, these help:
+    "frame-src 'self' https://js.stripe.com https://checkout.stripe.com; "
+    # Disallow everything else by default:
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'self';"
+)
+app.add_middleware(
+    SecurityMiddleware,
+    content_security_policy=CSP,
+    content_security_policy_report_only=False,   # set True temporarily if you want to test/report
+    referrer_policy="strict-origin-when-cross-origin",
+    permissions_policy="camera=(), microphone=(), geolocation=()",
+    strict_transport_security="max-age=31536000; includeSubDomains",
+    x_content_type_options=True,
+    x_frame_options="DENY",
+)
+
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
