@@ -73,7 +73,7 @@ DOWNLOAD_TTL_MIN = float(os.getenv("DOWNLOAD_TTL_MIN", "30"))
 class JobStatus:
     QUEUED = "queued"; RUNNING = "running"; DONE = "done"; ERROR = "error"
 
-# ------------ Pricing (unchanged) ------------
+# ------------ Pricing ------------
 def price_cents_for_size(size_bytes: int) -> int:
     mb = size_bytes / (1024 * 1024)
     if mb <= 250: return 199
@@ -93,7 +93,6 @@ class UploadMeta:
     provider: str = "gmail"
     priority: bool = False
     transcript: bool = False
-    # NEW: stream presence
     has_video: bool = True
     has_audio: bool = True
 
@@ -133,7 +132,6 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         pass
     return max(dur, 0.0), width, height
 
-# NEW: robust stream probing (detect if audio/video streams exist)
 def probe_stream_flags(path: str) -> Tuple[bool, bool]:
     has_video = False; has_audio = False
     pv = _run(f"{FFPROBE} -v error -select_streams v -show_entries stream=index -of csv=p=0 {shlex.quote(path)}")
@@ -185,7 +183,7 @@ async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
             if time.time() - last_heartbeat >= 5:
                 yield b": keep-alive\n\n"; last_heartbeat = time.time()
 
-# --- Pricing helpers (unchanged) ---
+# --- Pricing helpers ---
 SIZE_TIERS_MB = [500, 1000, 2000]
 PRICES_BY_PROVIDER = {"gmail":[1.99,2.99,4.49], "outlook":[2.19,3.29,4.99], "other":[2.49,3.99,5.49]}
 UPSELLS = {"priority":0.75, "transcript":1.50}
@@ -207,7 +205,7 @@ def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, tr
     total = base + (base * TAX_RATE)
     return max(100, int(round(total * 100)))
 
-# ------------ Email (unchanged) ------------
+# ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
 MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "noreply@mailsized.com")
@@ -270,7 +268,7 @@ def send_email_download(to_email: str, download_url: str) -> None:
 async def send_email(to_email: str, download_url: str) -> None:
     await asyncio.to_thread(send_email_download, to_email, download_url)
 
-# ------------ Security headers (unchanged CSP from your last working rev) ------------
+# ------------ Security headers ------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
@@ -288,13 +286,12 @@ async def security_headers(request: Request, call_next):
     )
     return resp
 
-# ------------ Optional basic rate limit (unchanged) ------------
+# ------------ Ads context ------------
 _RATE = {"tokens": {}, "capacity": 20, "refill": 20, "per": 60.0}
 ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "ca-pub-7488512497606071")
-ENABLE_ADSENSE = os.getenv("ENABLE_ADSENSE", "1") == "1"  # NEW: define so NameError cannot occur
+ENABLE_ADSENSE = os.getenv("ENABLE_ADSENSE", "1") == "1"
 
 def _adsense_context_for_request(request: Request) -> dict[str, str]:
-    # Only emit tag when enabled AND client id present
     if ENABLE_ADSENSE and ADSENSE_CLIENT_ID:
         tag = (
             f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT_ID}" '
@@ -308,6 +305,7 @@ def render(template_name: str, request: Request, **ctx):
     ctx = {**_adsense_context_for_request(request), **ctx}
     return template.render(**ctx)
 
+# ------------ Optional basic rate limit ------------
 @app.middleware("http")
 async def basic_rate_limit(request: Request, call_next):
     if not ENABLE_RATE_LIMIT:
@@ -325,16 +323,23 @@ async def basic_rate_limit(request: Request, call_next):
     _RATE["tokens"][ip] = b
     return await call_next(request)
 
-# ------------ Views (unchanged except render helper) ------------
+# ------------ Views ------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    job_id = request.query_params.get("job_id") or ""
+    job_id = (request.query_params.get("job_id") or "").strip()
     paid = request.query_params.get("paid") == "1"
+
+    # Robust server-side auto-start after Stripe success.
+    if paid and job_id:
+        job = JOBS.get(job_id)
+        if job and job.status == JobStatus.QUEUED:
+            asyncio.create_task(run_job(job))
+
     return render("index.html", request, paid=paid, job_id=job_id)
 
 @app.get("/terms", response_class=HTMLResponse)
-def terms() -> str:
-    return render("terms.html", Request)
+def terms(request: Request) -> str:
+    return render("terms.html", request)
 
 @app.get("/how-it-works", response_class=HTMLResponse)
 def how_it_works(request: Request):
@@ -390,7 +395,7 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
 
     try:
         duration, width, height = probe_info(str(temp_path))
-        has_video, has_audio = probe_stream_flags(str(temp_path))  # NEW
+        has_video, has_audio = probe_stream_flags(str(temp_path))
     except Exception as e:
         raise HTTPException(400, f"Probe failed: {e}")
 
@@ -404,7 +409,7 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
     meta = UploadMeta(
         upload_id=upload_id, src_path=temp_path, size_bytes=temp_path.stat().st_size,
         duration_sec=duration, width=width, height=height, email=email or None,
-        has_video=has_video, has_audio=has_audio,  # NEW
+        has_video=has_video, has_audio=has_audio,
     )
     UPLOADS[upload_id] = meta
 
@@ -421,13 +426,20 @@ async def checkout(request: Request):
     priority = bool(body.get("priority")); transcript = bool(body.get("transcript"))
     if not upload_id or upload_id not in UPLOADS: return JSONResponse({"error":"upload not found"}, status_code=404)
     if not email: return JSONResponse({"error":"email_required"}, status_code=400)
-    u = UPLOADS[upload_id]; u.provider = provider; u.priority = priority; u.transcript = transcript; u.email = email
+
+    u = UPLOADS[upload_id]
+    u.provider = provider; u.priority = priority; u.transcript = transcript; u.email = email
+
     price_cents = compute_order_total_cents(provider=provider, size_bytes=u.size_bytes, priority=priority, transcript=transcript)
-    job_id = str(uuid.uuid4()); job = JobState(job_id=job_id, upload=u, status=JobStatus.QUEUED, progress=0.0); JOBS[job_id] = job
+    job_id = str(uuid.uuid4())
+    job = JobState(job_id=job_id, upload=u, status=JobStatus.QUEUED, progress=0.0)
+    JOBS[job_id] = job
+
     if not stripe.api_key:
         asyncio.create_task(run_job(job))
         fake_url = f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}"
         return JSONResponse({"url": fake_url})
+
     try:
         session = stripe.checkout.Session.create(
             mode="payment",
@@ -464,8 +476,20 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         job_id = job_id or str(uuid.uuid4())
         job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0)
         JOBS[job_id] = job
-    asyncio.create_task(run_job(job))
+    if job.status == JobStatus.QUEUED:
+        asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
+
+# Optional “belt & suspenders” start endpoint (frontend may call after success redirect)
+@app.post("/start/{job_id}")
+async def start_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    if job.status in (JobStatus.RUNNING, JobStatus.DONE):
+        return {"ok": True, "status": job.status}
+    asyncio.create_task(run_job(job))
+    return {"ok": True, "status": "started"}
 
 @app.get("/events/{job_id}")
 async def events(job_id: str):
@@ -515,6 +539,9 @@ async def run_job(job: JobState):
 
     try:
         target_bytes = choose_target(u.provider, u.size_bytes)
+        if target_bytes <= 0:
+            target_bytes = max(10 * 1024 * 1024, u.size_bytes)  # safety floor
+
         v_bps, a_bps = compute_bitrates(u.duration_sec, target_bytes)
         do_two_pass = decide_two_pass(u.duration_sec, v_bps)
         tw, th = auto_scale(u.width, u.height, v_bps)
@@ -525,34 +552,29 @@ async def run_job(job: JobState):
 
         vf = f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease:flags=bicubic"
 
-        # NEW: safe stream mapping & audio handling
-        stream_maps = ["-map", "0:v:0"]
-        audio_args: list[str] = []
+        # Stream mapping and audio presence
+        map_args = ["-map", "0:v:0"]
         if u.has_audio:
-            stream_maps += ["-map", "0:a:0?"]  # optional audio
-            audio_args = ["-c:a", "aac", "-b:a", str(a_bps)]
-        else:
-            audio_args = ["-an"]
+            map_args += ["-map", "0:a:0?"]  # optional audio
 
-        common = [
+        video_core = [
             FFMPEG, "-y",
             "-i", str(u.src_path),
-            *stream_maps,
+            *map_args,
             "-vf", vf,
             "-c:v", "libx264",
             "-preset", ("veryfast" if u.priority else "faster"),
             "-movflags", "+faststart",
-            *audio_args,
             "-max_muxing_queue_size", "9999",
             "-hide_banner",
         ]
+        audio_args = (["-c:a", "aac", "-b:a", str(a_bps)] if u.has_audio else ["-an"])
 
         def percent_from_out_time_ms(line: str) -> Optional[float]:
             m = re.match(r"out_time_ms=(\d+)", line.strip())
-            if m:
+            if m and u.duration_sec > 0:
                 ms = int(m.group(1))
-                if u.duration_sec > 0:
-                    return min(99.0, (ms / 1_000_000.0) / u.duration_sec * 100.0)
+                return min(99.0, (ms / 1_000_000.0) / u.duration_sec * 100.0)
             return None
 
         async def run_and_stream(cmd: list[str]) -> int:
@@ -573,18 +595,25 @@ async def run_job(job: JobState):
                         last_emit = pct
             rc = await proc.wait()
             if rc != 0:
-                # bubble up a friendlier error message if stderr has details
                 err = (await proc.stderr.read()).decode("utf-8", "ignore").strip()
                 raise RuntimeError(err or "FFmpeg failed")
             return rc
 
-        passlog = str(OUTPUT_DIR / f"ffpass_{job.job_id}")  # NEW
+        passlog = str(OUTPUT_DIR / f"ffpass_{job.job_id}")
 
         if do_two_pass:
-            await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "1", "-passlogfile", passlog, "-f", "mp4", "/dev/null"])
-            await run_and_stream(common + ["-b:v", str(v_bps), "-pass", "2", "-passlogfile", passlog, str(out_path)])
+            # PASS 1: video-only stats; use null muxer to avoid “Nothing was written…”
+            await run_and_stream(
+                video_core + ["-an", "-b:v", str(v_bps), "-pass", "1", "-passlogfile", passlog, "-f", "null", "/dev/null"]
+            )
+            # PASS 2: real encode with audio (if present)
+            await run_and_stream(
+                video_core + audio_args + ["-b:v", str(v_bps), "-pass", "2", "-passlogfile", passlog, str(out_path)]
+            )
         else:
-            await run_and_stream(common + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)])
+            await run_and_stream(
+                video_core + audio_args + ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(int(v_bps * 2)), str(out_path)]
+            )
 
         if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
