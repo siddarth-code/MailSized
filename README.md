@@ -95,7 +95,7 @@ The application reads a number of environment variables to configure optional fe
 | `EMAIL_PASSWORD`        | Password for SMTP authentication (fallback)                    |
 | `SENDER_EMAIL`          | From address for outgoing emails (e.g. `contact@mailsized.com`)|
 | `DOWNLOAD_TTL_MIN`      | Minutes before a generated download link expires (default 30)   |
-| `ENABLE_ADSENSE`        | Set to `true` to activate AdSense; `false` disables ads         |
+| `ENABLE_ADSENSE`        | Set to `true`/`1` to activate AdSense; otherwise ads stay off   |
 | `ADSENSE_CLIENT_ID`     | Your Google AdSense client ID (e.g. `ca-pub-…`)                 |
 | `CONSENT_GIVEN`         | Indicates whether the user has consented to ad loading         |
 

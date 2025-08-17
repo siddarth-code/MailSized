@@ -39,9 +39,15 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "")
 
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """Return True if the env var is one of several truthy values."""
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Feature flags / ads
-ENABLE_RATE_LIMIT = os.getenv("ENABLE_RATE_LIMIT", "0") == "1"
-ENABLE_ADSENSE = os.getenv("ENABLE_ADSENSE", "1") == "1"  # default ON; safe if blocked
+ENABLE_RATE_LIMIT = _env_flag("ENABLE_RATE_LIMIT")
+ENABLE_ADSENSE = _env_flag("ENABLE_ADSENSE")
 ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "pub-7488512497606071")
 ADSENSE_SIDEBAR_SLOT = os.getenv("ADSENSE_SIDEBAR_SLOT", "5410433645")  # your numeric slot id
 
