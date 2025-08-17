@@ -27,8 +27,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount static files if available
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Templates directory may not exist in all environments, but Jinja2Templates
+# will lazily error only when rendering. Keeping the instantiation allows the
+# helper functions below to be imported without requiring template files.
 templates = Jinja2Templates(directory="templates")
 
 # Configuration
@@ -151,8 +156,15 @@ def format_file_size(bytes):
 
 
 def format_duration(seconds):
-    mins = seconds // 60
-    secs = seconds % 60
+    """Return a human readable ``M:SS min`` string.
+
+    The input may be a ``float`` (for example from a video probe).  To avoid
+    ``TypeError`` when formatting, the value is coerced to an integer number of
+    seconds and clamped to zero for negative inputs.
+    """
+
+    total_seconds = max(int(seconds), 0)
+    mins, secs = divmod(total_seconds, 60)
     return f"{mins}:{secs:02d} min"
 
 
