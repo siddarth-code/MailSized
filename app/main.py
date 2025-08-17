@@ -84,15 +84,29 @@ PROVIDER_PRICING = {
 
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
+def _adsense_context_for_request(request: Request) -> dict:
+    """Return template vars including a CSP nonce-aware AdSense loader."""
+    nonce = getattr(request.state, "csp_nonce", "")
+    adsense_tag = ""
+    if ENABLE_ADSENSE and ADSENSE_CLIENT_ID:
+        adsense_tag = (
+            f'<script async nonce="{nonce}" '
+            f'src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT_ID}" '
+            'crossorigin="anonymous"></script>'
+        )
+    return {
+        "adsense_tag": adsense_tag,
+        "adsense_client_id": ADSENSE_CLIENT_ID,
+        "adsense_sidebar_slot": ADSENSE_SIDEBAR_SLOT,
+        "csp_nonce": nonce,
+        "GA_ID": GA_MEASUREMENT_ID,
+    }
 
-def adsense_script_tag() -> str:
-    enabled = os.getenv("ENABLE_ADSENSE", "false").lower() == "true"
-    consent = os.getenv("CONSENT_GIVEN", "false").lower() == "true"
-    client = os.getenv("ADSENSE_CLIENT_ID", "").strip()
-    if not (enabled and consent and client):
-        return ""
-    return (f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'
-            f'?client={client}" crossorigin="anonymous"></script>')
+# And change your render helper (or each view) to use it:
+def render(name: str, request: Request, **ctx) -> str:
+    tpl = env.get_template(name)
+    ctx = {**_adsense_context_for_request(request), **ctx}
+    return tpl.render(**ctx)
 
 
 def calculate_pricing(duration_sec: int, file_size_bytes: int) -> Dict[str, Any]:
