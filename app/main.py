@@ -42,7 +42,7 @@ OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "")
 # Feature flags / ads
 ENABLE_RATE_LIMIT = os.getenv("ENABLE_RATE_LIMIT", "0") == "1"
 ENABLE_ADSENSE = os.getenv("ENABLE_ADSENSE", "1") == "1"  # default ON; safe if blocked
-ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "ca-pub-7488512497606071")
+ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "pub-7488512497606071")
 ADSENSE_SIDEBAR_SLOT = os.getenv("ADSENSE_SIDEBAR_SLOT", "5410433645")  # your numeric slot id
 
 # Paths (all under /app)
