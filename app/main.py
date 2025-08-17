@@ -95,19 +95,28 @@ app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(["html","xml"]))
 
 # Helper: render with CSP nonce + ads/GA values
+def _adsense_context_for_request(request: Request) -> dict:
+    """Return template vars including a CSP nonce-aware AdSense loader."""
+    nonce = getattr(request.state, "csp_nonce", "")
+    adsense_tag = ""
+    if ENABLE_ADSENSE and ADSENSE_CLIENT_ID:
+        adsense_tag = (
+            f'<script async nonce="{nonce}" '
+            f'src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT_ID}" '
+            'crossorigin="anonymous"></script>'
+        )
+    return {
+        "adsense_tag": adsense_tag,
+        "adsense_client_id": ADSENSE_CLIENT_ID,
+        "adsense_sidebar_slot": ADSENSE_SIDEBAR_SLOT,
+        "csp_nonce": nonce,
+        "GA_ID": GA_MEASUREMENT_ID,
+    }
+
+# And change your render helper (or each view) to use it:
 def render(name: str, request: Request, **ctx) -> str:
     tpl = env.get_template(name)
-    nonce = getattr(request.state, "csp_nonce", "")
-    # AdSense async tag with nonce
-    ads_tag = (
-        f'<script async nonce="{nonce}" '
-        f'src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT_ID}" '
-        'crossorigin="anonymous"></script>'
-    )
-    ctx.setdefault("csp_nonce", nonce)
-    ctx.setdefault("adsense_tag", ads_tag)
-    ctx.setdefault("adsense_client_id", ADSENSE_CLIENT_ID)
-    ctx.setdefault("GA_ID", GA_MEASUREMENT_ID)
+    ctx = {**_adsense_context_for_request(request), **ctx}
     return tpl.render(**ctx)
 
 # ------------ Attachment caps / limits ------------
