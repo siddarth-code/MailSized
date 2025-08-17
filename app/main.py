@@ -17,7 +17,16 @@ from typing import AsyncIterator, Dict, Optional, Tuple
 
 import requests
 import stripe
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Header
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    Header,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
@@ -477,6 +486,7 @@ def blog_meet_mailsized():
 
 @app.post("/contact")
 async def contact_post(
+    background_tasks: BackgroundTasks,
     user_email: str = Form(...),
     subject: str = Form(...),
     message: str = Form(...),
@@ -485,7 +495,9 @@ async def contact_post(
         raise HTTPException(status_code=400, detail="Valid email required.")
     if not subject.strip() or not message.strip():
         raise HTTPException(status_code=400, detail="Subject and message are required.")
-    send_contact_message(user_email.strip(), subject.strip(), message.strip())
+    background_tasks.add_task(
+        send_contact_message, user_email.strip(), subject.strip(), message.strip()
+    )
     return RedirectResponse(url="/contact?sent=1", status_code=303)
 
 
