@@ -301,6 +301,10 @@ header p{
 .pricing-table [data-col].is-selected { background: #f1ecff; font-weight: 600; }
 .pricing-table .sep-row td { border: 0; height: 8px; }
 
+/* Mini-bill totals row emphasis */
+#pricingTotals tbody tr td:first-child { font-weight: 600; color: #2d3748; }
+#pricingTotals tbody tr td:not(:first-child) { font-weight: 600; }
+
 .price-summary{
   border:1px solid var(--border); border-radius: 10px; overflow: hidden;
 }
