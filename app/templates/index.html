@@ -181,46 +181,79 @@
       <!-- Pricing -->
       <div class="info-card">
         <h2><i class="fas fa-receipt"></i> Pricing Details</h2>
+
         <div class="pricing-table-wrapper">
-          <table class="pricing-table">
+          <table class="pricing-table" id="pricingTable" aria-live="polite">
             <thead>
               <tr>
                 <th>File size</th>
-                <th>Gmail</th>
-                <th>Outlook</th>
-                <th>Other</th>
+                <th data-col="gmail">Gmail</th>
+                <th data-col="outlook">Outlook</th>
+                <th data-col="other">Other</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>0–500 MB</td>
-                <td>$1.99</td>
-                <td>$2.19</td>
-                <td>$2.49</td>
+                <td data-col="gmail">$1.99</td>
+                <td data-col="outlook">$2.19</td>
+                <td data-col="other">$2.49</td>
               </tr>
               <tr>
                 <td>501 MB–1 GB</td>
-                <td>$2.99</td>
-                <td>$3.29</td>
-                <td>$3.99</td>
+                <td data-col="gmail">$2.99</td>
+                <td data-col="outlook">$3.29</td>
+                <td data-col="other">$3.99</td>
               </tr>
               <tr>
                 <td>1.01–2 GB</td>
-                <td>$4.49</td>
-                <td>$4.99</td>
-                <td>$5.49</td>
+                <td data-col="gmail">$4.49</td>
+                <td data-col="outlook">$4.99</td>
+                <td data-col="other">$5.49</td>
               </tr>
             </tbody>
+
+            <!-- Dynamic summary that updates as users pick provider/extras -->
+            <tfoot>
+              <tr class="sep-row"><td colspan="4"></td></tr>
+              <tr id="rowBase">
+                <th>Base (by tier)</th>
+                <td id="tblBase_gmail"   data-col="gmail">$1.99</td>
+                <td id="tblBase_outlook" data-col="outlook">$2.19</td>
+                <td id="tblBase_other"   data-col="other">$2.49</td>
+              </tr>
+              <tr id="rowUpsells">
+                <th>Extras</th>
+                <td id="tblUpsell_gmail"   data-col="gmail">$0.00</td>
+                <td id="tblUpsell_outlook" data-col="outlook">$0.00</td>
+                <td id="tblUpsell_other"   data-col="other">$0.00</td>
+              </tr>
+              <tr id="rowTax">
+                <th>Estimated tax (10%)</th>
+                <td id="tblTax_gmail"   data-col="gmail">$0.00</td>
+                <td id="tblTax_outlook" data-col="outlook">$0.00</td>
+                <td id="tblTax_other"   data-col="other">$0.00</td>
+              </tr>
+              <tr id="rowTotal" class="emph">
+                <th>Total</th>
+                <td id="tblTotal_gmail"   data-col="gmail">$1.99</td>
+                <td id="tblTotal_outlook" data-col="outlook">$2.19</td>
+                <td id="tblTotal_other"   data-col="other">$2.49</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
 
-        <!-- Ad slot: only data-* attributes; JS will hydrate if ads script loaded -->
-        <div
-          id="ad-slot-sidebar"
-          class="ad-slot"
-          data-ad-client="{{ adsense_client_id }}"
-          data-ad-slot="{{ adsense_sidebar_slot }}"
-        >
+        <!-- Keep the simple summary below (these IDs are used by JS) -->
+        <div class="price-summary">
+          <div class="price-item"><span>Base compression:</span> <span id="basePrice">$1.99</span></div>
+          <div class="price-item"><span>Priority Processing:</span> <span id="priorityPrice">$0.00</span></div>
+          <div class="price-item"><span>Transcript:</span> <span id="transcriptPrice">$0.00</span></div>
+          <div class="price-item"><span>Estimated tax (10%):</span> <span id="taxAmount">$0.00</span></div>
+          <div class="price-total"><span>Total:</span> <span id="totalAmount">$1.99</span></div>
+        </div>
+
+        <div id="ad-slot-sidebar" class="ad-slot" data-ad-slot="{{ adsense_sidebar_slot }}">
           <div class="ad-placeholder">Sponsored • placeholder</div>
         </div>
       </div>
