@@ -212,35 +212,28 @@
                 <td data-col="other">$5.49</td>
               </tr>
             </tbody>
+          </table>
+        </div>
 
-            <!-- Dynamic summary that updates as users pick provider/extras -->
-            <tfoot>
-              <tr class="sep-row"><td colspan="4"></td></tr>
-              <tr id="rowBase">
-                <th>Base (by tier)</th>
-                <td id="tblBase_gmail"   data-col="gmail">$1.99</td>
-                <td id="tblBase_outlook" data-col="outlook">$2.19</td>
-                <td id="tblBase_other"   data-col="other">$2.49</td>
+        <!-- Mini-bill: show only Totals per provider -->
+        <div class="pricing-totals-wrapper" style="margin-top:10px;">
+          <table class="pricing-table" id="pricingTotals" aria-label="Totals by provider">
+            <thead>
+              <tr>
+                <th style="width:120px;">Totals</th>
+                <th>Gmail</th>
+                <th>Outlook</th>
+                <th>Other</th>
               </tr>
-              <tr id="rowUpsells">
-                <th>Extras</th>
-                <td id="tblUpsell_gmail"   data-col="gmail">$0.00</td>
-                <td id="tblUpsell_outlook" data-col="outlook">$0.00</td>
-                <td id="tblUpsell_other"   data-col="other">$0.00</td>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Total</td>
+                <td id="ptTotalGmail">$1.99</td>
+                <td id="ptTotalOutlook">$2.19</td>
+                <td id="ptTotalOther">$2.49</td>
               </tr>
-              <tr id="rowTax">
-                <th>Estimated tax (10%)</th>
-                <td id="tblTax_gmail"   data-col="gmail">$0.00</td>
-                <td id="tblTax_outlook" data-col="outlook">$0.00</td>
-                <td id="tblTax_other"   data-col="other">$0.00</td>
-              </tr>
-              <tr id="rowTotal" class="emph">
-                <th>Total</th>
-                <td id="tblTotal_gmail"   data-col="gmail">$1.99</td>
-                <td id="tblTotal_outlook" data-col="outlook">$2.19</td>
-                <td id="tblTotal_other"   data-col="other">$2.49</td>
-              </tr>
-            </tfoot>
+            </tbody>
           </table>
         </div>
 

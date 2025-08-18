@@ -67,55 +67,56 @@ function highlightProviderColumn(provider){
 
 /* ---------- totals (updates right panel + dynamic table) ---------- */
 function calcTotals(){
+  // elements in the side "price summary" (keep these)
   const baseEl = $("basePrice");
   const priEl  = $("priorityPrice");
   const traEl  = $("transcriptPrice");
   const taxEl  = $("taxAmount");
   const totEl  = $("totalAmount");
 
-  // Which tier are we in?
+  const provider = state.provider || "gmail";
   const tier = state.uploadId ? tierFromSize(state.sizeBytes) : 1;
   state.tier = tier;
 
-  // Helper to get base by provider for current tier
-  const baseByProv = (prov) => {
-    const arr = PRICE_MATRIX[prov] || PRICE_MATRIX.gmail;
-    return arr[tier - 1];
-  };
+  // base for selected provider/tier
+  const base = PRICE_MATRIX[provider][tier-1];
+  const pri  = $("priority")?.checked ? UPSALE.priority : 0;
+  const tra  = $("transcript")?.checked ? UPSALE.transcript : 0;
 
-  const provider = (state.provider || "gmail").toLowerCase();
-  const upsell = ( $("priority")?.checked ? UPSALE.priority : 0 )
-               + ( $("transcript")?.checked ? UPSALE.transcript : 0 );
+  const subtotal = base + pri + tra;
+  const tax = +(subtotal * 0.10).toFixed(2);
+  const total = +(subtotal + tax).toFixed(2);
 
-  // Recompute totals for each provider (so the table shows all 3)
-  ["gmail","outlook","other"].forEach(p => {
-    const base  = baseByProv(p);
-    const tax   = +( (base + upsell) * 0.10 ).toFixed(2);
-    const total = +( base + upsell + tax ).toFixed(2);
+  // Fill the detailed calculator (bottom block) as before
+  setTextSafe(baseEl, `$${base.toFixed(2)}`);
+  setTextSafe(priEl,  `$${pri.toFixed(2)}`);
+  setTextSafe(traEl,  `$${tra.toFixed(2)}`);
+  setTextSafe(taxEl,  `$${tax.toFixed(2)}`);
+  setTextSafe(totEl,  `$${total.toFixed(2)}`);
 
-    setTextSafe($("tblBase_"+p),   `$${base.toFixed(2)}`);
-    setTextSafe($("tblUpsell_"+p), `$${upsell.toFixed(2)}`);
-    setTextSafe($("tblTax_"+p),    `$${tax.toFixed(2)}`);
-    setTextSafe($("tblTotal_"+p),  `$${total.toFixed(2)}`);
+  // --- Mini-bill table: ONLY totals per provider ---
+  // Compute totals for all three providers using the current file size & extras
+  const t = state.uploadId ? state.sizeBytes : 1;   // if no file yet, assume tier 1
+  const tierFor = (t<=T1_MAX?0:(t<=T2_MAX?1:2));
+
+  const priAdd = $("priority")?.checked ? UPSALE.priority : 0;
+  const traAdd = $("transcript")?.checked ? UPSALE.transcript : 0;
+
+  ["gmail","outlook","other"].forEach((p)=>{
+    const baseP = PRICE_MATRIX[p][tierFor];
+    const subtotalP = baseP + priAdd + traAdd;
+    const taxP = +(subtotalP * 0.10).toFixed(2);
+    const totalP = +(subtotalP + taxP).toFixed(2);
+
+    const cellId = p === "gmail" ? "ptTotalGmail"
+                  : p === "outlook" ? "ptTotalOutlook"
+                  : "ptTotalOther";
+    setTextSafe($(cellId), `$${totalP.toFixed(2)}`);
   });
 
-  // Update the simple summary (mirrors the selected provider)
-  const selBase = baseByProv(provider);
-  const selTax  = +((selBase + upsell) * 0.10).toFixed(2);
-  const selTot  = +(selBase + upsell + selTax).toFixed(2);
-
-  setTextSafe(baseEl, `$${selBase.toFixed(2)}`);
-  setTextSafe(priEl,  `$${($("priority")?.checked ? UPSALE.priority : 0).toFixed(2)}`);
-  setTextSafe(traEl,  `$${($("transcript")?.checked ? UPSALE.transcript : 0).toFixed(2)}`);
-  setTextSafe(taxEl,  `$${selTax.toFixed(2)}`);
-  setTextSafe(totEl,  `$${selTot.toFixed(2)}`);
-
-  // Visually mark selected provider column
-  highlightProviderColumn(provider);
-
-  // Also reflect the price in the action button if present
+  // Update the CTA with current provider total (nice touch you already had)
   const btn = $("processButton");
-  if(btn) btn.innerHTML = `<i class="fas fa-credit-card"></i> Pay &amp; Compress ($${selTot.toFixed(2)})`;
+  if(btn) btn.innerHTML = `<i class="fas fa-credit-card"></i> Pay &amp; Compress ($${total.toFixed(2)})`;
 }
 
 /* ---------- upload wiring ---------- */
