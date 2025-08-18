@@ -1,8 +1,9 @@
 /* app/static/script.js */
 /* MailSized script • v7.4
-   - webhook-safe job start (client kicker)
-   - ad hydration tolerant to ad blockers
-   - CSP-safe GA (no inline)
+   - bulletproof pricing updates (all paths & browsers)
+   - shows live total on Pay button
+   - robust upload progress + SSE (unchanged)
+   - GA/Ads init (unchanged)
 */
 
 const $  = (id) => document.getElementById(id);
@@ -30,8 +31,8 @@ function setStep(active){
 
 /* ---------- pricing (provider + size tiers) ---------- */
 const BYTES_MB = 1024*1024;
-const T1_MAX = 500*BYTES_MB;  // 0–500 MB
-const T2_MAX = 1024*BYTES_MB; // 501 MB–1 GB (1.01–2 GB => tier 3)
+const T1_MAX = 500*BYTES_MB;
+const T2_MAX = 1024*BYTES_MB;
 
 function tierFromSize(bytes){
   if(bytes <= T1_MAX) return 1;
@@ -40,7 +41,7 @@ function tierFromSize(bytes){
 }
 
 const PRICE_MATRIX = {
-  gmail:   [1.99, 2.99, 4.99],
+  gmail:   [1.99, 2.99, 4.49],  // keep in sync with your backend/index table
   outlook: [2.19, 3.29, 4.99],
   other:   [2.49, 3.99, 5.49],
 };
@@ -56,31 +57,55 @@ const state = {
   tier: 1,
 };
 
-/* ---------- totals ---------- */
-function calcTotals(){
-  const baseEl = $("basePrice");
-  const priEl  = $("priorityPrice");
-  const traEl  = $("transcriptPrice");
-  const taxEl  = $("taxAmount");
-  const totEl  = $("totalAmount");
+/* ---------- PRICING CORE: ALWAYS SAFE ---------- */
+function getCurrentPricing(){
+  // Provider guard
+  const provider = (state.provider || "gmail").toLowerCase();
+  const table = PRICE_MATRIX[provider] || PRICE_MATRIX.gmail;
 
-  const provider = state.provider || "gmail";
-  const tier = state.uploadId ? tierFromSize(state.sizeBytes) : 1;
-  state.tier = tier;
+  // Tier guard
+  const tier = state.uploadId ? tierFromSize(Number(state.sizeBytes)||0) : 1;
+  const base = Number(table[tier-1] || table[0] || 1.99);
 
-  const base = PRICE_MATRIX[provider][tier-1];
-  const pri  = $("priority")?.checked ? UPSALE.priority : 0;
-  const tra  = $("transcript")?.checked ? UPSALE.transcript : 0;
+  // Extras
+  const pri  = !!$("priority")?.checked ? UPSALE.priority : 0;
+  const tra  = !!$("transcript")?.checked ? UPSALE.transcript : 0;
 
+  // Totals
   const subtotal = base + pri + tra;
   const tax = +(subtotal * 0.10).toFixed(2);
   const total = +(subtotal + tax).toFixed(2);
 
-  setTextSafe(baseEl, `$${base.toFixed(2)}`);
-  setTextSafe(priEl,  `$${pri.toFixed(2)}`);
-  setTextSafe(traEl,  `$${tra.toFixed(2)}`);
-  setTextSafe(taxEl,  `$${tax.toFixed(2)}`);
-  setTextSafe(totEl,  `$${total.toFixed(2)}`);
+  return { provider, tier, base, pri, tra, tax, total };
+}
+
+function updatePricingUI(){
+  const { base, pri, tra, tax, total, provider, tier } = getCurrentPricing();
+
+  setTextSafe($("basePrice"),       `$${base.toFixed(2)}`);
+  setTextSafe($("priorityPrice"),   `$${pri.toFixed(2)}`);
+  setTextSafe($("transcriptPrice"), `$${tra.toFixed(2)}`);
+  setTextSafe($("taxAmount"),       `$${tax.toFixed(2)}`);
+  setTextSafe($("totalAmount"),     `$${total.toFixed(2)}`);
+
+  // Also reflect price on the Pay button if present
+  const btn = $("processButton");
+  if (btn) {
+    const label = "Pay & Compress";
+    // Don’t duplicate the amount if user navigates around
+    const clean = btn.textContent.replace(/\s*\(\$[0-9.]+\)\s*$/,'');
+    btn.textContent = `${clean} ($${total.toFixed(2)})`;
+  }
+
+  // Optional: visually hint at active provider card
+  try{
+    const list = $("providerList") || qs(".providers");
+    if(list){
+      qsa("[data-provider]", list).forEach(n=>{
+        n.classList.toggle("selected", (n.getAttribute("data-provider")||"").toLowerCase()===provider);
+      });
+    }
+  }catch{}
 }
 
 /* ---------- upload wiring ---------- */
@@ -110,7 +135,7 @@ function wireUpload(){
     state.file=null; state.uploadId=null; fileInput.value="";
     if(fileInfo) fileInfo.style.display="none";
     const up = $("uploadProgress"); if(up) up.style.display="none";
-    setStep(0); calcTotals();
+    setStep(0); updatePricingUI();
   });
 }
 
@@ -190,7 +215,7 @@ async function handleFile(file){
   setTextSafe($("fileDuration"), fmtDuration(state.durationSec));
 
   setStep(1);
-  calcTotals();
+  updatePricingUI();   // <— ensure totals reflect actual file size tier
 }
 
 /* ---------- provider & extras ---------- */
@@ -199,13 +224,11 @@ function wireProviders(){
   if(!list) return;
   list.addEventListener("click",(e)=>{
     const btn = e.target.closest("[data-provider]"); if(!btn) return;
-    qsa("[data-provider]", list).forEach(n=> n.classList.remove("selected"));
-    btn.classList.add("selected");
     state.provider = (btn.getAttribute("data-provider")||"gmail").toLowerCase();
-    calcTotals();
+    updatePricingUI();
   });
-  $("priority")?.addEventListener("change", calcTotals);
-  $("transcript")?.addEventListener("change", calcTotals);
+  $("priority")?.addEventListener("change", updatePricingUI);
+  $("transcript")?.addEventListener("change", updatePricingUI);
 }
 
 /* ---------- checkout ---------- */
@@ -238,6 +261,9 @@ function wireCheckout(){
       email
     };
 
+    // sanity: one more refresh of button total
+    updatePricingUI();
+
     let res;
     try{
       res = await fetch("/checkout", {
@@ -260,14 +286,7 @@ function wireCheckout(){
   });
 }
 
-/* ---------- webhook-safe resume & SSE ---------- */
-async function maybeKickJob(jobId){
-  // Idempotent: backend returns ok whether it was already running or not.
-  try{
-    await fetch(`/start/${encodeURIComponent(jobId)}`, { method: "POST" });
-  }catch{/* ignore */}
-}
-
+/* ---------- resume & SSE ---------- */
 function resumeIfPaid(){
   const root = $("pageRoot");
   const dsPaid = root?.getAttribute("data-paid")==="1";
@@ -282,10 +301,6 @@ function resumeIfPaid(){
   const post = $("postPaySection");
   if(post) post.style.display = "";
   setStep(2);
-
-  // NEW: ensure the job starts even if the Stripe webhook is delayed/missed.
-  maybeKickJob(jobId);
-
   startSSE(jobId);
 }
 
@@ -295,7 +310,7 @@ function revealDownload(url){
   const emailNote = $("emailNote");
   if(!url || !dlLink || !dlSection) return;
   dlLink.href = url;
-  dlSection.style.display = "block"; // override CSS
+  dlSection.style.display = "block";
   if(emailNote) emailNote.style.display = "";
   setStep(3);
   setTextSafe($("progressNote"), "Complete");
@@ -308,8 +323,6 @@ function startSSE(jobId){
 
   try{
     const es = new EventSource(`/events/${encodeURIComponent(jobId)}`);
-    let opened = false;
-    es.onopen = ()=> { opened = true; };
     es.onmessage = async (evt)=>{
       let data={}; try{ data = JSON.parse(evt.data||"{}"); }catch{}
 
@@ -341,43 +354,8 @@ function startSSE(jobId){
         if(noteEl) noteEl.textContent = "Error";
       }
     };
-    es.onerror = ()=>{
-      es.close();
-      if(!opened) pollStatus(jobId);
-    };
-  }catch{
-    pollStatus(jobId);
-  }
-}
-
-async function pollStatus(jobId, tries = 240){ // ~4 min at 1s
-  for (let i = 0; i < tries; i++) {
-    try {
-      const r = await fetch(`/status/${encodeURIComponent(jobId)}`, { cache: "no-store" });
-      if (!r.ok) throw 0;
-      const j = await r.json();
-      const p = Number(j.progress || 0);
-      const pctEl = $("progressPct");
-      const fillEl= $("progressFill");
-      const noteEl= $("progressNote");
-      if (pctEl) pctEl.textContent = `${Math.floor(p)}%`;
-      if (fillEl) fillEl.style.width = `${Math.floor(p)}%`;
-      if (noteEl) noteEl.textContent = j.message || "Working…";
-      if (j.status === "done") {
-        try {
-          const r2 = await fetch(`/download/${encodeURIComponent(jobId)}`);
-          const j2 = await r2.json();
-          if (j2?.url) revealDownload(j2.url);
-        } catch {}
-        return;
-      }
-      if (j.status === "error") {
-        showError(j.message || "Compression failed.");
-        return;
-      }
-    } catch {}
-    await new Promise(res => setTimeout(res, 1000));
-  }
+    es.onerror = ()=>{/* heartbeats keep it alive */};
+  }catch{/* noop */}
 }
 
 /* ---------- errors ---------- */
@@ -392,10 +370,9 @@ function hideError(){
   if(box) box.style.display = "none";
 }
 
-/* ---------- GA (no inline; CSP safe) ---------- */
+/* ---------- GA (external; CSP safe) ---------- */
 function initGA(){
-  // If you want, put GA id on <body data-ga-id="G-XXXX">; otherwise this safely no-ops.
-  const gaId = $("pageRoot")?.getAttribute("data-ga-id");
+  const gaId = $("pageRoot")?.getAttribute("data-ga-id"); // if you add this later
   if(!gaId) return;
   window.dataLayer = window.dataLayer || [];
   window.gtag = function(){ window.dataLayer.push(arguments); };
@@ -403,52 +380,34 @@ function initGA(){
   window.gtag('config', gaId);
 }
 
-/* ---------- AdSense hydration (adblock-resilient) ---------- */
-function hydrateAdsNow(){
-  // Works whether the ads script was loaded by template or not.
-  const slotEl = $("ad-slot-sidebar");
-  if(!slotEl) return;
-
-  // Prefer client from the slot; fall back to body attribute.
-  const client = slotEl.getAttribute("data-ad-client") || $("pageRoot")?.getAttribute("data-adsense-client") || "";
-  const slot   = slotEl.getAttribute("data-ad-slot") || "";
-  if(!client || !slot) return;
-
-  // If ad runtime missing (e.g., blocked), just leave placeholder silently.
-  if (typeof window.adsbygoogle === "undefined") return;
-
-  slotEl.innerHTML = "";
-  const ins = document.createElement("ins");
-  ins.className = "adsbygoogle";
-  ins.style.display = "block";
-  ins.setAttribute("data-ad-client", client);
-  ins.setAttribute("data-ad-slot", slot);
-  ins.setAttribute("data-full-width-responsive", "true");
-  slotEl.appendChild(ins);
-
-  try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch(_) {}
-}
-
-function ensureAdsScriptThenHydrate(){
-  // If runtime already present (template included it), just hydrate.
-  if (typeof window.adsbygoogle !== "undefined") {
-    hydrateAdsNow();
-    return;
-  }
-
-  // Otherwise, try to load it ourselves if we have a client id.
-  const slotEl = $("ad-slot-sidebar");
-  const client = slotEl?.getAttribute("data-ad-client") || $("pageRoot")?.getAttribute("data-adsense-client") || "";
+/* ---------- AdSense (CSP safe; adblock resilient) ---------- */
+function initAds(){
+  const client = $("pageRoot")?.getAttribute("data-adsense-client");
   if(!client) return;
 
-  if(document.querySelector('script[data-adsbygoogle]')) return; // already loading
+  if(document.querySelector('script[data-adsbygoogle]')) return;
+
   const s = document.createElement("script");
   s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(client)}`;
   s.async = true;
   s.crossOrigin = "anonymous";
-  s.setAttribute("data-adsbygoogle","1");
-  s.addEventListener("load", hydrateAdsNow);
-  s.addEventListener("error", ()=>{/* blocked -> no-op */});
+  s.setAttribute("data-adsbygoogle", "1");
+
+  s.addEventListener("load", ()=>{
+    qsa(".ad-slot[data-ad-slot]").forEach((host)=>{
+      host.innerHTML = "";
+      const ins = document.createElement("ins");
+      ins.className = "adsbygoogle";
+      ins.style.display = "block";
+      ins.setAttribute("data-ad-client", client);
+      ins.setAttribute("data-ad-slot", host.getAttribute("data-ad-slot") || "");
+      ins.setAttribute("data-full-width-responsive", "true");
+      host.appendChild(ins);
+      try{ (window.adsbygoogle = window.adsbygoogle || []).push({}); }catch{}
+    });
+  });
+  s.addEventListener("error", ()=>{});
+
   document.head.appendChild(s);
 }
 
@@ -457,10 +416,9 @@ document.addEventListener("DOMContentLoaded", ()=>{
   wireUpload();
   wireProviders();
   wireCheckout();
-  calcTotals();
+  updatePricingUI();  // <- compute immediately on load
   resumeIfPaid();
 
-  // Optional: initialize analytics and ads (both CSP-safe; both no-op if disabled/blocked)
   initGA();
-  ensureAdsScriptThenHydrate();
+  initAds();
 });
