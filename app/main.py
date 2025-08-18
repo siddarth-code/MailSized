@@ -26,6 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 # ------------ Utilities ------------
+
+
 def _env_flag(name: str) -> bool:
     """Return True if the environment variable *name* is set to a truthy value.
 
@@ -37,6 +39,7 @@ def _env_flag(name: str) -> bool:
 
     val = os.getenv(name, "").strip().lower()
     return val in {"1", "true", "yes", "on"}
+
 
 # ------------ Config / Env ------------
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
@@ -76,7 +79,9 @@ if not STATIC_DIR.exists():
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 
-env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(["html","xml"]))
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(["html", "xml"])
+)
 
 # ------------ Limits ------------
 # These map providers to their maximum allowed attachment size in megabytes.
@@ -87,16 +92,27 @@ MAX_SIZE_GB = 2
 MAX_DURATION_SEC = 20 * 60
 DOWNLOAD_TTL_MIN = float(os.getenv("DOWNLOAD_TTL_MIN", "30"))
 
+
 class JobStatus:
-    QUEUED = "queued"; RUNNING = "running"; DONE = "done"; ERROR = "error"
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
+
 
 # ------------ Pricing ------------
+
+
 def price_cents_for_size(size_bytes: int) -> int:
     mb = size_bytes / (1024 * 1024)
-    if mb <= 250: return 199
-    if mb <= 750: return 399
-    if mb <= 1280: return 599
+    if mb <= 250:
+        return 199
+    if mb <= 750:
+        return 399
+    if mb <= 1280:
+        return 599
     return 799
+
 
 @dataclass
 class UploadMeta:
@@ -113,6 +129,7 @@ class UploadMeta:
     has_video: bool = True
     has_audio: bool = True
 
+
 @dataclass
 class JobState:
     job_id: str
@@ -124,6 +141,7 @@ class JobState:
     error: Optional[str] = None
     q: asyncio.Queue = field(default_factory=asyncio.Queue)
 
+
 UPLOADS: Dict[str, UploadMeta] = {}
 JOBS: Dict[str, JobState] = {}
 FFMPEG_LOCK = asyncio.Lock()
@@ -131,8 +149,13 @@ FFMPEG_LOCK = asyncio.Lock()
 log = logging.getLogger("mailsized")
 
 # ------------ Helpers ------------
+
+
 def _run(cmd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    return subprocess.run(
+        shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+    )
+
 
 def probe_info(path: str) -> Tuple[float, int, int]:
     if not Path(path).exists():
@@ -143,14 +166,18 @@ def probe_info(path: str) -> Tuple[float, int, int]:
         dur = float(json.loads(d.stdout or "{}").get("format", {}).get("duration", 0.0))
     except Exception:
         pass
-    s = _run(f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}")
+    s = _run(
+        f"{FFPROBE} -v error -select_streams v:0 -show_entries stream=width,height -of json {shlex.quote(path)}"
+    )
     width = height = 0
     try:
         st = json.loads(s.stdout or "{}").get("streams", [{}])[0]
-        width = int(st.get("width") or 0); height = int(st.get("height") or 0)
+        width = int(st.get("width") or 0)
+        height = int(st.get("height") or 0)
     except Exception:
         pass
     return max(dur, 0.0), width, height
+
 
 def probe_stream_flags(path: str) -> Tuple[bool, bool]:
     """Return booleans indicating presence of video and audio streams.
@@ -182,13 +209,16 @@ def probe_stream_flags(path: str) -> Tuple[bool, bool]:
         pass
     return has_video, has_audio
 
+
 def choose_target(provider: str, size_bytes: int) -> int:
     cap_mb = PROVIDER_TARGETS_MB.get((provider or "").lower(), PROVIDER_TARGETS_MB["other"])
     target_bytes = max(0, int((cap_mb - 1.5) * 1024 * 1024))
     return min(max(size_bytes, 0), target_bytes)
 
 
-def email_target_bitrates(duration_s: float, target_bytes: int, audio_kbps: int = 96, overhead: float = 0.92) -> Tuple[int, int]:
+def email_target_bitrates(
+    duration_s: float, target_bytes: int, audio_kbps: int = 96, overhead: float = 0.92
+) -> Tuple[int, int]:
     """Compute conservative video bitrate and scale cap for an e-mail sized output.
 
     The calculation reserves a portion of the overall target for container
@@ -204,30 +234,44 @@ def email_target_bitrates(duration_s: float, target_bytes: int, audio_kbps: int 
     cap = 1280 if v_kbps >= 800 else 854
     return int(v_kbps), cap
 
+
 def compute_bitrates(duration_sec: float, target_bytes: int) -> Tuple[int, int]:
-    if duration_sec <= 0: duration_sec = 120.0
+    if duration_sec <= 0:
+        duration_sec = 120.0
     total_bits = int(target_bytes * 8 * 0.94)
     audio_bps = 80_000
     video_bps = max(int(total_bits / duration_sec) - audio_bps, 400_000)
     return video_bps, audio_bps
 
+
 def decide_two_pass(duration_sec: float, video_bps: int) -> bool:
-    if duration_sec >= 120: return True
-    if video_bps <= 600_000: return True
+    if duration_sec >= 120:
+        return True
+    if video_bps <= 600_000:
+        return True
     return False
 
+
 def auto_scale(width: int, height: int, video_bps: int) -> Tuple[int, int]:
-    if width <= 0 or height <= 0: return (960, 540) if video_bps < 600_000 else (1280, 720)
+    if width <= 0 or height <= 0:
+        return (960, 540) if video_bps < 600_000 else (1280, 720)
     target_w, target_h = width, height
     px = width * height
-    if video_bps < 500_000: target_w, target_h = 854, 480
-    elif video_bps < 900_000: target_w, target_h = 1280, 720
+    if video_bps < 500_000:
+        target_w, target_h = 854, 480
+    elif video_bps < 900_000:
+        target_w, target_h = 1280, 720
     else:
-        if px > 1920 * 1080: target_w, target_h = 1920, 1080
-    target_w -= target_w % 2; target_h -= target_h % 2
+        if px > 1920 * 1080:
+            target_w, target_h = 1920, 1080
+    target_w -= target_w % 2
+    target_h -= target_h % 2
     return max(target_w, 2), max(target_h, 2)
 
-def put(job: JobState, **payload): job.q.put_nowait(payload)
+
+def put(job: JobState, **payload):
+    job.q.put_nowait(payload)
+
 
 async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
     yield f"data: {json.dumps({'type':'state','progress':round(job.progress,1),'status':job.status,'message':job.message})}\n\n".encode()
@@ -236,33 +280,49 @@ async def sse_stream(job: JobState) -> AsyncIterator[bytes]:
         try:
             item = await asyncio.wait_for(job.q.get(), timeout=5.0)
             yield f"data: {json.dumps(item)}\n\n".encode()
-            if item.get("status") in ("done","error"):
-                await asyncio.sleep(0.25); return
+            if item.get("status") in ("done", "error"):
+                await asyncio.sleep(0.25)
+                return
         except asyncio.TimeoutError:
             if time.time() - last_heartbeat >= 5:
-                yield b": keep-alive\n\n"; last_heartbeat = time.time()
+                yield b": keep-alive\n\n"
+                last_heartbeat = time.time()
+
 
 # --- Pricing helpers ---
 SIZE_TIERS_MB = [500, 1000, 2000]
-PRICES_BY_PROVIDER = {"gmail":[1.99,2.99,4.49], "outlook":[2.19,3.29,4.99], "other":[2.49,3.99,5.49]}
-UPSELLS = {"priority":0.75, "transcript":1.50}
+PRICES_BY_PROVIDER = {
+    "gmail": [1.99, 2.99, 4.49],
+    "outlook": [2.19, 3.29, 4.99],
+    "other": [2.49, 3.99, 5.49],
+}
+UPSELLS = {"priority": 0.75, "transcript": 1.50}
 TAX_RATE = 0.10
+
 
 def _tier_index_from_bytes(n_bytes: int) -> int:
     mb = n_bytes / (1024 * 1024)
-    if mb <= 500: return 0
-    if mb <= 1000: return 1
+    if mb <= 500:
+        return 0
+    if mb <= 1000:
+        return 1
     return 2
 
-def compute_order_total_cents(provider: str, size_bytes: int, priority: bool, transcript: bool) -> int:
+
+def compute_order_total_cents(
+    provider: str, size_bytes: int, priority: bool, transcript: bool
+) -> int:
     prov = (provider or "gmail").lower()
     table = PRICES_BY_PROVIDER.get(prov, PRICES_BY_PROVIDER["gmail"])
     tier_idx = _tier_index_from_bytes(size_bytes)
     base = float(table[tier_idx])
-    if priority: base += UPSELLS["priority"]
-    if transcript: base += UPSELLS["transcript"]
+    if priority:
+        base += UPSELLS["priority"]
+    if transcript:
+        base += UPSELLS["transcript"]
     total = base + (base * TAX_RATE)
     return max(100, int(round(total * 100)))
+
 
 # ------------ Email ------------
 MAILGUN_KEY = os.environ.get("MAILGUN_API_KEY", "")
@@ -273,19 +333,27 @@ SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "587") or "587")
 SMTP_USER = os.environ.get("EMAIL_USERNAME", "")
 SMTP_PASS = os.environ.get("EMAIL_PASSWORD", "")
 
+
 def send_contact_message(from_email: str, subject: str, body: str) -> None:
-    if not OWNER_EMAIL: return
+    if not OWNER_EMAIL:
+        return
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
                 f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
                 auth=("api", MAILGUN_KEY),
-                data={"from": f"MailSized Contact <{SENDER_EMAIL or 'no-reply@mailsized.com'}>","to":[OWNER_EMAIL],
-                      "subject": f"[MailSized Contact] {subject}","text": f"From: {from_email}\n\n{body}"},
+                data={
+                    "from": f"MailSized Contact <{SENDER_EMAIL or 'no-reply@mailsized.com'}>",
+                    "to": [OWNER_EMAIL],
+                    "subject": f"[MailSized Contact] {subject}",
+                    "text": f"From: {from_email}\n\n{body}",
+                },
                 timeout=10,
             )
-            r.raise_for_status(); return
-        except Exception: pass
+            r.raise_for_status()
+            return
+        except Exception:
+            pass
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
@@ -294,22 +362,36 @@ def send_contact_message(from_email: str, subject: str, body: str) -> None:
             msg["Subject"] = f"[MailSized Contact] {subject}"
             msg.set_content(f"From: {from_email}\n\n{body}")
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
-                s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
-        except Exception: return
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        except Exception:
+            return
+
 
 def send_email_download(to_email: str, download_url: str) -> None:
-    subject = "Your MailSized download"; body = f"Your file is ready: {download_url}\n"
+    subject = "Your MailSized download"
+    body = f"Your file is ready: {download_url}\n"
     if MAILGUN_KEY and MAILGUN_DOMAIN:
         try:
             r = requests.post(
                 f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
                 auth=("api", MAILGUN_KEY),
-                data={"from": SENDER_EMAIL or "no-reply@mailsized.com","to":[to_email],"subject": subject,"text": body,
-                      "h:Auto-Submitted": "auto-generated","h:X-Auto-Response-Suppress": "All","h:Reply-To":"no-reply@mailsized.com"},
+                data={
+                    "from": SENDER_EMAIL or "no-reply@mailsized.com",
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": body,
+                    "h:Auto-Submitted": "auto-generated",
+                    "h:X-Auto-Response-Suppress": "All",
+                    "h:Reply-To": "no-reply@mailsized.com",
+                },
                 timeout=10,
             )
-            r.raise_for_status(); return
-        except Exception: pass
+            r.raise_for_status()
+            return
+        except Exception:
+            pass
     if SMTP_HOST and SMTP_USER and SMTP_PASS:
         try:
             msg = EmailMessage()
@@ -321,13 +403,20 @@ def send_email_download(to_email: str, download_url: str) -> None:
             msg["Reply-To"] = "no-reply@mailsized.com"
             msg.set_content(body)
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
-                s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
-        except Exception: return
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        except Exception:
+            return
+
 
 async def send_email(to_email: str, download_url: str) -> None:
     await asyncio.to_thread(send_email_download, to_email, download_url)
 
+
 # ------------ Security headers ------------
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
@@ -345,10 +434,12 @@ async def security_headers(request: Request, call_next):
     )
     return resp
 
+
 # ------------ Ads context ------------
 _RATE = {"tokens": {}, "capacity": 20, "refill": 20, "per": 60.0}
 ADSENSE_CLIENT_ID = os.getenv("ADSENSE_CLIENT_ID", "ca-pub-7488512497606071")
 ENABLE_ADSENSE = os.getenv("ENABLE_ADSENSE", "1") == "1"
+
 
 def _adsense_context_for_request(request: Request) -> dict[str, str]:
     if ENABLE_ADSENSE and ADSENSE_CLIENT_ID:
@@ -359,12 +450,16 @@ def _adsense_context_for_request(request: Request) -> dict[str, str]:
         return {"adsense_tag": tag, "adsense_client_id": ADSENSE_CLIENT_ID}
     return {"adsense_tag": "", "adsense_client_id": ""}
 
+
 def render(template_name: str, request: Request, **ctx):
     template = env.get_template(template_name)
     ctx = {**_adsense_context_for_request(request), **ctx}
     return template.render(**ctx)
 
+
 # ------------ Optional basic rate limit ------------
+
+
 @app.middleware("http")
 async def basic_rate_limit(request: Request, call_next):
     if not ENABLE_RATE_LIMIT:
@@ -382,7 +477,10 @@ async def basic_rate_limit(request: Request, call_next):
     _RATE["tokens"][ip] = b
     return await call_next(request)
 
+
 # ------------ Views ------------
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     job_id = (request.query_params.get("job_id") or "").strip()
@@ -396,41 +494,58 @@ def index(request: Request):
 
     return render("index.html", request, paid=paid, job_id=job_id)
 
+
 @app.get("/terms", response_class=HTMLResponse)
 def terms(request: Request) -> str:
     return render("terms.html", request)
+
 
 @app.get("/how-it-works", response_class=HTMLResponse)
 def how_it_works(request: Request):
     return render("how-it-works.html", request)
 
+
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy(request: Request):
     return render("privacy.html", request)
+
 
 @app.get("/contact", response_class=HTMLResponse)
 def contact_get(request: Request):
     sent = request.query_params.get("sent") == "1"
     return render("contact.html", request, sent=sent)
 
+
 @app.get("/blogs", response_class=HTMLResponse)
 def blogs_index(request: Request):
     return render("blogs.html", request)
+
 
 @app.get("/blog/meet-mailsized", response_class=HTMLResponse)
 def blog_meet_mailsized(request: Request):
     return render("blog-meet-mailsized.html", request)
 
+
 @app.post("/contact")
-async def contact_post(background_tasks: BackgroundTasks, user_email: str = Form(...), subject: str = Form(...), message: str = Form(...)):
+async def contact_post(
+    background_tasks: BackgroundTasks,
+    user_email: str = Form(...),
+    subject: str = Form(...),
+    message: str = Form(...),
+):
     if not user_email or "@" not in user_email:
         raise HTTPException(status_code=400, detail="Valid email required.")
     if not subject.strip() or not message.strip():
         raise HTTPException(status_code=400, detail="Subject and message are required.")
-    background_tasks.add_task(send_contact_message, user_email.strip(), subject.strip(), message.strip())
+    background_tasks.add_task(
+        send_contact_message, user_email.strip(), subject.strip(), message.strip()
+    )
     return RedirectResponse(url="/contact?sent=1", status_code=303)
 
+
 # ------------ API ------------
+
+
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)):
     if not file.filename:
@@ -445,7 +560,8 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
     with temp_path.open("wb") as f:
         while True:
             chunk = await file.read(1024 * 1024)
-            if not chunk: break
+            if not chunk:
+                break
             written += len(chunk)
             if written > max_bytes:
                 temp_path.unlink(missing_ok=True)
@@ -468,30 +584,56 @@ async def upload(file: UploadFile = File(...), email: Optional[str] = Form(None)
     # ``False`` without rejecting the upload.
 
     meta = UploadMeta(
-        upload_id=upload_id, src_path=temp_path, size_bytes=temp_path.stat().st_size,
-        duration_sec=duration, width=width, height=height, email=email or None,
-        has_video=has_video, has_audio=has_audio,
+        upload_id=upload_id,
+        src_path=temp_path,
+        size_bytes=temp_path.stat().st_size,
+        duration_sec=duration,
+        width=width,
+        height=height,
+        email=email or None,
+        has_video=has_video,
+        has_audio=has_audio,
     )
     UPLOADS[upload_id] = meta
 
-    return JSONResponse({"ok": True,"upload_id": upload_id,"duration_sec": duration,"size_bytes": meta.size_bytes,
-                         "width": width,"height": height,"price_cents": price_cents_for_size(meta.size_bytes)})
+    return JSONResponse(
+        {
+            "ok": True,
+            "upload_id": upload_id,
+            "duration_sec": duration,
+            "size_bytes": meta.size_bytes,
+            "width": width,
+            "height": height,
+            "price_cents": price_cents_for_size(meta.size_bytes),
+        }
+    )
+
 
 @app.post("/checkout")
 async def checkout(request: Request):
-    try: body = await request.json()
-    except Exception: body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     upload_id = (body.get("upload_id") or "").strip()
     provider = (body.get("provider") or "gmail").lower()
     email = (body.get("email") or "").strip()
-    priority = bool(body.get("priority")); transcript = bool(body.get("transcript"))
-    if not upload_id or upload_id not in UPLOADS: return JSONResponse({"error":"upload not found"}, status_code=404)
-    if not email: return JSONResponse({"error":"email_required"}, status_code=400)
+    priority = bool(body.get("priority"))
+    transcript = bool(body.get("transcript"))
+    if not upload_id or upload_id not in UPLOADS:
+        return JSONResponse({"error": "upload not found"}, status_code=404)
+    if not email:
+        return JSONResponse({"error": "email_required"}, status_code=400)
 
     u = UPLOADS[upload_id]
-    u.provider = provider; u.priority = priority; u.transcript = transcript; u.email = email
+    u.provider = provider
+    u.priority = priority
+    u.transcript = transcript
+    u.email = email
 
-    price_cents = compute_order_total_cents(provider=provider, size_bytes=u.size_bytes, priority=priority, transcript=transcript)
+    price_cents = compute_order_total_cents(
+        provider=provider, size_bytes=u.size_bytes, priority=priority, transcript=transcript
+    )
     job_id = str(uuid.uuid4())
     job = JobState(job_id=job_id, upload=u, status=JobStatus.QUEUED, progress=0.0)
     JOBS[job_id] = job
@@ -504,7 +646,16 @@ async def checkout(request: Request):
     try:
         session = stripe.checkout.Session.create(
             mode="payment",
-            line_items=[{"price_data":{"currency":"usd","product_data":{"name":"MailSized Video Compression"},"unit_amount":price_cents},"quantity":1}],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {"name": "MailSized Video Compression"},
+                        "unit_amount": price_cents,
+                    },
+                    "quantity": 1,
+                }
+            ],
             customer_email=email,
             success_url=f"{PUBLIC_BASE_URL}?paid=1&job_id={job_id}",
             cancel_url=f"{PUBLIC_BASE_URL}?canceled=1&job_id={job_id}",
@@ -512,36 +663,56 @@ async def checkout(request: Request):
         )
         return JSONResponse({"url": session.url})
     except Exception:
-        return JSONResponse({"error":"checkout_create_failed"}, status_code=500)
+        return JSONResponse({"error": "checkout_create_failed"}, status_code=500)
+
 
 @app.post("/stripe/webhook")
-async def stripe_webhook(request: Request, stripe_signature: str = Header(None, alias="stripe-signature")):
+async def stripe_webhook(
+    request: Request, stripe_signature: str = Header(None, alias="stripe-signature")
+):
     payload = await request.body()
     event = None
     if STRIPE_WEBHOOK_SECRET:
         try:
-            event = stripe.Webhook.construct_event(payload=payload, sig_header=stripe_signature or "", secret=STRIPE_WEBHOOK_SECRET)
+            event = stripe.Webhook.construct_event(
+                payload=payload, sig_header=stripe_signature or "", secret=STRIPE_WEBHOOK_SECRET
+            )
         except Exception:
             return JSONResponse({"ok": True}, status_code=200)
     else:
-        try: event = json.loads(payload.decode() or "{}")
-        except Exception: event = {}
+        try:
+            event = json.loads(payload.decode() or "{}")
+        except Exception:
+            event = {}
     event_type = event.get("type") if isinstance(event, dict) else event["type"]
-    if event_type != "checkout.session.completed": return {"ok": True}
-    obj = (event.get("data", {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"])
+    if event_type != "checkout.session.completed":
+        return {"ok": True}
+    obj = (
+        event.get("data", {}).get("object", {})
+        if isinstance(event, dict)
+        else event["data"]["object"]
+    )
     metadata = obj.get("metadata", {}) or {}
-    upload_id = metadata.get("upload_id"); job_id = metadata.get("job_id")
-    if not upload_id or upload_id not in UPLOADS: return {"ok": True}
+    upload_id = metadata.get("upload_id")
+    job_id = metadata.get("job_id")
+    if not upload_id or upload_id not in UPLOADS:
+        return {"ok": True}
     job = JOBS.get(job_id) if job_id else None
     if not job:
         job_id = job_id or str(uuid.uuid4())
-        job = JobState(job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0)
+        job = JobState(
+            job_id=job_id, upload=UPLOADS[upload_id], status=JobStatus.QUEUED, progress=0.0
+        )
         JOBS[job_id] = job
     if job.status == JobStatus.QUEUED:
         asyncio.create_task(run_job(job))
     return {"ok": True, "job_id": job.job_id}
 
-# Optional “belt & suspenders” start endpoint (frontend may call after success redirect)
+
+# Optional “belt & suspenders” start endpoint (frontend may call after
+# success redirect)
+
+
 @app.post("/start/{job_id}")
 async def start_job(job_id: str):
     job = JOBS.get(job_id)
@@ -557,7 +728,10 @@ async def start_job(job_id: str):
     asyncio.create_task(run_job(job))
     return {"ok": True, "status": "started"}
 
+
 # Lightweight status for polling fallback
+
+
 @app.get("/status/{job_id}")
 def job_status(job_id: str):
     job = JOBS.get(job_id)
@@ -571,14 +745,23 @@ def job_status(job_id: str):
         "has_output": bool(job.out_path and job.out_path.exists()),
     }
 
+
 @app.get("/events/{job_id}")
 async def events(job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        dummy = JobState(job_id=job_id, upload=UploadMeta(upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0), status=JobStatus.ERROR, message="Unknown job")
+        dummy = JobState(
+            job_id=job_id,
+            upload=UploadMeta(
+                upload_id="", src_path=Path(""), size_bytes=0, duration_sec=0, width=0, height=0
+            ),
+            status=JobStatus.ERROR,
+            message="Unknown job",
+        )
         put(dummy, type="state", status=JobStatus.ERROR, progress=0, message="Unknown job")
         return StreamingResponse(sse_stream(dummy), media_type="text/event-stream")
     return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+
 
 @app.get("/download/{job_id}")
 def download(job_id: str):
@@ -587,36 +770,52 @@ def download(job_id: str):
         raise HTTPException(404, "Not ready")
     return JSONResponse({"ok": True, "url": f"{PUBLIC_BASE_URL}/media/{job.out_path.name}"})
 
+
 async def cleanup_job(job_id: str) -> None:
     job = JOBS.pop(job_id, None)
-    if not job: return
+    if not job:
+        return
     up = job.upload
     try:
-        if up.upload_id in UPLOADS: UPLOADS.pop(up.upload_id, None)
-        if up.src_path.exists(): up.src_path.unlink(missing_ok=True)
-    except Exception: pass
+        if up.upload_id in UPLOADS:
+            UPLOADS.pop(up.upload_id, None)
+        if up.src_path.exists():
+            up.src_path.unlink(missing_ok=True)
+    except Exception:
+        pass
     try:
-        if job.out_path and job.out_path.exists(): job.out_path.unlink(missing_ok=True)
-    except Exception: pass
+        if job.out_path and job.out_path.exists():
+            job.out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
 
 async def _schedule_cleanup(job_id: str) -> None:
-    await asyncio.sleep(DOWNLOAD_TTL_MIN * 60); await cleanup_job(job_id)
+    await asyncio.sleep(DOWNLOAD_TTL_MIN * 60)
+    await cleanup_job(job_id)
+
 
 # ------------ Worker ------------
+
+
 def _preexec_ulimits():
     try:
         import resource
+
         resource.setrlimit(resource.RLIMIT_CPU, (1800, 1800))
         resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))
         resource.setrlimit(resource.RLIMIT_NOFILE, (512, 512))
     except Exception:
         pass
 
+
 async def run_job(job: JobState):
     u = job.upload
     job.status = JobStatus.RUNNING
     job.message = "Starting…"
-    log.info(f"[job {job.job_id}] start: {u.src_path} size={u.size_bytes} dur={u.duration_sec:.2f}s")
+    log.info(
+        f"[job {job.job_id}] start: {u.src_path} size={u.size_bytes} dur={u.duration_sec:.2f}s"
+    )
     put(job, type="state", status=JobStatus.RUNNING, progress=0.0, message=job.message)
 
     try:
@@ -629,7 +828,8 @@ async def run_job(job: JobState):
 
         out_name = f"{job.job_id}.mp4"
         out_path = OUTPUT_DIR / out_name
-        if out_path.exists(): out_path.unlink(missing_ok=True)
+        if out_path.exists():
+            out_path.unlink(missing_ok=True)
 
         vf = f"scale='min({cap},iw)':'-2'"
 
@@ -639,19 +839,31 @@ async def run_job(job: JobState):
             map_args += ["-map", "0:a:0?"]  # optional audio
 
         video_core = [
-            FFMPEG, "-y",
-            "-i", str(u.src_path),
+            FFMPEG,
+            "-y",
+            "-i",
+            str(u.src_path),
             *map_args,
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-profile:v", "main",
-            "-level", "3.1",
-            "-pix_fmt", "yuv420p",
-            "-threads", "1",
-            "-x264-params", "ref=1:bframes=0:rc-lookahead=10",
-            "-movflags", "+faststart",
-            "-max_muxing_queue_size", "9999",
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-profile:v",
+            "main",
+            "-level",
+            "3.1",
+            "-pix_fmt",
+            "yuv420p",
+            "-threads",
+            "1",
+            "-x264-params",
+            "ref=1:bframes=0:rc-lookahead=10",
+            "-movflags",
+            "+faststart",
+            "-max_muxing_queue_size",
+            "9999",
             "-hide_banner",
         ]
         a_kbps = 96
@@ -670,19 +882,33 @@ async def run_job(job: JobState):
 
         async def run_and_stream(cmd: list[str]) -> int:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, "-progress", "pipe:1", "-nostats", "-loglevel", "error",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, preexec_fn=_preexec_ulimits
+                *cmd,
+                "-progress",
+                "pipe:1",
+                "-nostats",
+                "-loglevel",
+                "error",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                preexec_fn=_preexec_ulimits,
             )
             last_emit = 0.0
             while True:
                 line = await proc.stdout.readline()
-                if not line: break
+                if not line:
+                    break
                 txt = line.decode("utf-8", "ignore")
                 if "out_time_ms=" in txt:
                     pct = percent_from_out_time_ms(txt)
                     if pct is not None and pct - last_emit >= 1.0:
                         job.progress = pct
-                        put(job, type="progress", progress=round(pct, 1), status="running", message="Compressing…")
+                        put(
+                            job,
+                            type="progress",
+                            progress=round(pct, 1),
+                            status="running",
+                            message="Compressing…",
+                        )
                         last_emit = pct
             rc = await proc.wait()
             if rc != 0:
@@ -708,18 +934,33 @@ async def run_job(job: JobState):
         if not out_path.exists() or out_path.stat().st_size <= 0:
             raise RuntimeError("Output missing")
 
-        job.progress = 100.0; job.status = JobStatus.DONE; job.out_path = out_path
+        job.progress = 100.0
+        job.status = JobStatus.DONE
+        job.out_path = out_path
         dl_url = f"{PUBLIC_BASE_URL}/media/{out_path.name}"
-        put(job, type="state", status=JobStatus.DONE, progress=100.0, message="Complete", download_url=dl_url)
+        put(
+            job,
+            type="state",
+            status=JobStatus.DONE,
+            progress=100.0,
+            message="Complete",
+            download_url=dl_url,
+        )
         log.info(f"[job {job.job_id}] done -> {out_path} ({out_path.stat().st_size} bytes)")
-        if u.email: asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
+        if u.email:
+            asyncio.create_task(asyncio.to_thread(send_email_download, u.email, dl_url))
         asyncio.create_task(_schedule_cleanup(job.job_id))
 
     except Exception as e:
-        job.status = JobStatus.ERROR; job.error = str(e)
+        job.status = JobStatus.ERROR
+        job.error = str(e)
         log.error(f"[job {job.job_id}] error: {e}")
         put(job, type="state", status=JobStatus.ERROR, progress=job.progress, message=str(e))
 
+
 # ------------ Health ------------
+
+
 @app.get("/healthz")
-def healthz(): return {"ok": True}
+def healthz():
+    return {"ok": True}
