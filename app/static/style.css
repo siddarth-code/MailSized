@@ -296,6 +296,11 @@ header p{
 }
 .pricing-table tr:nth-child(even) td{ background:#fafaff; }
 
+.pricing-table tfoot .emph th,
+.pricing-table tfoot .emph td { font-weight: 700; }
+.pricing-table [data-col].is-selected { background: #f1ecff; font-weight: 600; }
+.pricing-table .sep-row td { border: 0; height: 8px; }
+
 .price-summary{
   border:1px solid var(--border); border-radius: 10px; overflow: hidden;
 }

@@ -57,55 +57,65 @@ const state = {
   tier: 1,
 };
 
-/* ---------- PRICING CORE: ALWAYS SAFE ---------- */
-function getCurrentPricing(){
-  // Provider guard
-  const provider = (state.provider || "gmail").toLowerCase();
-  const table = PRICE_MATRIX[provider] || PRICE_MATRIX.gmail;
-
-  // Tier guard
-  const tier = state.uploadId ? tierFromSize(Number(state.sizeBytes)||0) : 1;
-  const base = Number(table[tier-1] || table[0] || 1.99);
-
-  // Extras
-  const pri  = !!$("priority")?.checked ? UPSALE.priority : 0;
-  const tra  = !!$("transcript")?.checked ? UPSALE.transcript : 0;
-
-  // Totals
-  const subtotal = base + pri + tra;
-  const tax = +(subtotal * 0.10).toFixed(2);
-  const total = +(subtotal + tax).toFixed(2);
-
-  return { provider, tier, base, pri, tra, tax, total };
+/* ---------- highlight selected provider column in the table ---------- */
+function highlightProviderColumn(provider){
+  const cols = qsa('[data-col]');
+  cols.forEach(el => {
+    el.classList.toggle('is-selected', el.getAttribute('data-col') === provider);
+  });
 }
 
-function updatePricingUI(){
-  const { base, pri, tra, tax, total, provider, tier } = getCurrentPricing();
+/* ---------- totals (updates right panel + dynamic table) ---------- */
+function calcTotals(){
+  const baseEl = $("basePrice");
+  const priEl  = $("priorityPrice");
+  const traEl  = $("transcriptPrice");
+  const taxEl  = $("taxAmount");
+  const totEl  = $("totalAmount");
 
-  setTextSafe($("basePrice"),       `$${base.toFixed(2)}`);
-  setTextSafe($("priorityPrice"),   `$${pri.toFixed(2)}`);
-  setTextSafe($("transcriptPrice"), `$${tra.toFixed(2)}`);
-  setTextSafe($("taxAmount"),       `$${tax.toFixed(2)}`);
-  setTextSafe($("totalAmount"),     `$${total.toFixed(2)}`);
+  // Which tier are we in?
+  const tier = state.uploadId ? tierFromSize(state.sizeBytes) : 1;
+  state.tier = tier;
 
-  // Also reflect price on the Pay button if present
+  // Helper to get base by provider for current tier
+  const baseByProv = (prov) => {
+    const arr = PRICE_MATRIX[prov] || PRICE_MATRIX.gmail;
+    return arr[tier - 1];
+  };
+
+  const provider = (state.provider || "gmail").toLowerCase();
+  const upsell = ( $("priority")?.checked ? UPSALE.priority : 0 )
+               + ( $("transcript")?.checked ? UPSALE.transcript : 0 );
+
+  // Recompute totals for each provider (so the table shows all 3)
+  ["gmail","outlook","other"].forEach(p => {
+    const base  = baseByProv(p);
+    const tax   = +( (base + upsell) * 0.10 ).toFixed(2);
+    const total = +( base + upsell + tax ).toFixed(2);
+
+    setTextSafe($("tblBase_"+p),   `$${base.toFixed(2)}`);
+    setTextSafe($("tblUpsell_"+p), `$${upsell.toFixed(2)}`);
+    setTextSafe($("tblTax_"+p),    `$${tax.toFixed(2)}`);
+    setTextSafe($("tblTotal_"+p),  `$${total.toFixed(2)}`);
+  });
+
+  // Update the simple summary (mirrors the selected provider)
+  const selBase = baseByProv(provider);
+  const selTax  = +((selBase + upsell) * 0.10).toFixed(2);
+  const selTot  = +(selBase + upsell + selTax).toFixed(2);
+
+  setTextSafe(baseEl, `$${selBase.toFixed(2)}`);
+  setTextSafe(priEl,  `$${($("priority")?.checked ? UPSALE.priority : 0).toFixed(2)}`);
+  setTextSafe(traEl,  `$${($("transcript")?.checked ? UPSALE.transcript : 0).toFixed(2)}`);
+  setTextSafe(taxEl,  `$${selTax.toFixed(2)}`);
+  setTextSafe(totEl,  `$${selTot.toFixed(2)}`);
+
+  // Visually mark selected provider column
+  highlightProviderColumn(provider);
+
+  // Also reflect the price in the action button if present
   const btn = $("processButton");
-  if (btn) {
-    const label = "Pay & Compress";
-    // Don’t duplicate the amount if user navigates around
-    const clean = btn.textContent.replace(/\s*\(\$[0-9.]+\)\s*$/,'');
-    btn.textContent = `${clean} ($${total.toFixed(2)})`;
-  }
-
-  // Optional: visually hint at active provider card
-  try{
-    const list = $("providerList") || qs(".providers");
-    if(list){
-      qsa("[data-provider]", list).forEach(n=>{
-        n.classList.toggle("selected", (n.getAttribute("data-provider")||"").toLowerCase()===provider);
-      });
-    }
-  }catch{}
+  if(btn) btn.innerHTML = `<i class="fas fa-credit-card"></i> Pay &amp; Compress ($${selTot.toFixed(2)})`;
 }
 
 /* ---------- upload wiring ---------- */
@@ -135,7 +145,7 @@ function wireUpload(){
     state.file=null; state.uploadId=null; fileInput.value="";
     if(fileInfo) fileInfo.style.display="none";
     const up = $("uploadProgress"); if(up) up.style.display="none";
-    setStep(0); updatePricingUI();
+    setStep(0); calcTotals();
   });
 }
 
@@ -215,7 +225,7 @@ async function handleFile(file){
   setTextSafe($("fileDuration"), fmtDuration(state.durationSec));
 
   setStep(1);
-  updatePricingUI();   // <— ensure totals reflect actual file size tier
+  calcTotals();   // <— ensure totals reflect actual file size tier
 }
 
 /* ---------- provider & extras ---------- */
@@ -225,10 +235,13 @@ function wireProviders(){
   list.addEventListener("click",(e)=>{
     const btn = e.target.closest("[data-provider]"); if(!btn) return;
     state.provider = (btn.getAttribute("data-provider")||"gmail").toLowerCase();
-    updatePricingUI();
+    qsa("[data-provider]", list).forEach(n=>{
+      n.classList.toggle("selected", n===btn);
+    });
+    calcTotals();
   });
-  $("priority")?.addEventListener("change", updatePricingUI);
-  $("transcript")?.addEventListener("change", updatePricingUI);
+  $("priority")?.addEventListener("change", calcTotals);
+  $("transcript")?.addEventListener("change", calcTotals);
 }
 
 /* ---------- checkout ---------- */
@@ -262,7 +275,7 @@ function wireCheckout(){
     };
 
     // sanity: one more refresh of button total
-    updatePricingUI();
+    calcTotals();
 
     let res;
     try{
@@ -416,7 +429,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
   wireUpload();
   wireProviders();
   wireCheckout();
-  updatePricingUI();  // <- compute immediately on load
+  calcTotals();  // <- compute immediately on load
   resumeIfPaid();
 
   initGA();
